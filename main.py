@@ -9,7 +9,7 @@ from telegram.ext import (
     ContextTypes, filters, Defaults
 )
 
-# Настройка логирования
+# Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -21,20 +21,30 @@ GROUP_ID = int(os.getenv("GROUP_ID"))
 FORBIDDEN_LINKS = ["http", "https", "t.me/", "bit.ly"]
 FORBIDDEN_WORDS = []
 
-# Хранилище активности
+# Активность пользователей
 user_activity = defaultdict(int)
 
-# Обработка сообщений — фильтр спама
+# Удаление ссылок и слов
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message is None:
+    if not update.message or not update.message.text:
         return
 
     text = update.message.text.lower()
     user_id = update.message.from_user.id
     user_activity[user_id] += 1
 
+    # Удаляем сообщения с запрещёнными словами/ссылками
     if any(word in text for word in FORBIDDEN_LINKS + FORBIDDEN_WORDS):
         await update.message.delete()
+        return
+
+    # Ответы на кнопки
+    if text == "📜 reglas":
+        await update.message.reply_text("📜 Estas son las reglas del grupo: respetá, no spam, +18 ✅")
+    elif text == "💬 escribile al admin":
+        await update.message.reply_text("📩 Podés contactarte con el admin acá: @TuAdminUsername")
+    elif text == "🤖 sobre el bot":
+        await update.message.reply_text("🤖 Soy un bot que te cuida del spam y ayuda con info del grupo.")
 
 # Приветствие новых участников
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -63,42 +73,41 @@ async def send_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Todavía no hay actividad registrada.")
         return
 
-    response = "📊 Lxs más charlatanes del grupo:\n"
+    text = "📊 Lxs más charlatanes del grupo:\n"
     for user_id, count in top_users:
         try:
             user = await context.bot.get_chat_member(GROUP_ID, user_id)
-            response += f"• {user.user.first_name}: {count} mensajes\n"
-        except:
+            text += f"• {user.user.first_name}: {count} mensajes\n"
+        except Exception:
             continue
-    await update.message.reply_text(response)
 
-# Ежедневный пост
+    await update.message.reply_text(text)
+
+# Автопост
 async def daily_post(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(
         chat_id=GROUP_ID,
         text="☀️ ¡Buen día a todes! ¿Qué pensás del tema de hoy?\n#CharlitaDelDía"
     )
 
-# Основной запуск
+# Запуск бота
 def main():
     print("✅ Bot is starting...")
-
     defaults = Defaults(parse_mode="HTML")
     app = Application.builder().token(TOKEN).defaults(defaults).build()
 
-    # Команды
+    # Хендлеры команд
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("report", report))
     app.add_handler(CommandHandler("stats", send_stats))
 
-    # Сообщения
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
+    # Хендлеры сообщений и новых участников
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 
-    # Задание на каждый день
+    # Ежедневный пост в 9:00
     app.job_queue.run_daily(daily_post, time=datetime.strptime("09:00", "%H:%M").time())
 
-    # Запуск
     app.run_polling()
 
 if __name__ == "__main__":
