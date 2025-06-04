@@ -1,27 +1,26 @@
 import os
 from datetime import datetime
 from collections import defaultdict
-
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, filters,
     CommandHandler, ContextTypes, Defaults
 )
 
-# === Настройки окружения ===
-TOKEN = os.getenv("BOT_TOKEN")
-GROUP_ID = int(os.getenv("GROUP_ID", "-1001234567890"))
+# === Настройки ===
+TOKEN = os.getenv("BOT_TOKEN", "7837998734:AAFg-UE2qobtNmCT7szBCjweZde3Qj2X2X8")
+GROUP_ID = int(os.getenv("GROUP_ID", "-1000000000000"))  # замените на свой ID группы
 
-# === Списки запрещённого ===
 FORBIDDEN_LINKS = ["http", "https", "t.me/", "bit.ly"]
-FORBIDDEN_WORDS = []  # можешь пополнять позже
+FORBIDDEN_WORDS = []
 
-# === Хранилище активности пользователей ===
 user_activity = defaultdict(int)
 
-# === Удаление ссылок и слов ===
+# === Обработка сообщений ===
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
+    if not msg or not msg.text:
+        return
     text = msg.text.lower()
     user_id = msg.from_user.id
     user_activity[user_id] += 1
@@ -29,14 +28,14 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if any(word in text for word in FORBIDDEN_LINKS + FORBIDDEN_WORDS):
         await msg.delete()
 
-# === Приветствие новых участников ===
+# === Приветствие ===
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for user in update.message.new_chat_members:
         await update.message.reply_text(
             f"👋 ¡Bienvenidx {user.first_name} a <b>San Juan Online 🇦🇷</b>! Acá compartimos buena onda y respeto 🤝"
         )
 
-# === Меню /start ===
+# === Команда /start ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["📜 Reglas", "💬 Escribile al admin"], ["🤖 Sobre el bot"]]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -45,18 +44,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=markup
     )
 
-# === Жалоба /report ===
+# === Команда /report ===
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🛡️ Gracias por avisar. El equipo va a revisarlo 👀")
 
-# === Авторассылка поста дня ===
-async def daily_post(context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(
-        chat_id=GROUP_ID,
-        text="☀️ ¡Buen día a todes! ¿Qué pensás del tema de hoy?\n#CharlitaDelDía"
-    )
-
-# === Статистика активности ===
+# === Команда /stats ===
 async def send_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     top_users = sorted(user_activity.items(), key=lambda x: x[1], reverse=True)[:5]
     if not top_users:
@@ -72,23 +64,26 @@ async def send_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             continue
     await update.message.reply_text(response)
 
-# === Главная функция запуска бота ===
+# === Утренний пост ===
+async def daily_post(context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(
+        chat_id=GROUP_ID,
+        text="☀️ ¡Buen día a todes! ¿Qué pensás del tema de hoy?\n#CharlitaDelDía"
+    )
+
+# === Запуск ===
 def main():
     defaults = Defaults(parse_mode="HTML")
     app = Application.builder().token(TOKEN).defaults(defaults).build()
 
-    # Команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("report", report))
     app.add_handler(CommandHandler("stats", send_stats))
-
-    # Обработка сообщений
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_messages))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
 
-    # Автоматический пост каждый день в 9:00
     app.job_queue.run_daily(daily_post, time=datetime.strptime("09:00", "%H:%M").time())
-
+    print("✅ Бот запущен и готов к работе")
     app.run_polling()
 
 if __name__ == "__main__":
