@@ -8,7 +8,7 @@ from telegram.ext import (
 )
 
 # === Настройки ===
-TOKEN = os.getenv("BOT_TOKEN", "7837998734:AAFg-UE2qobtNmCT7szBCjweZde3Qj2X2X8")
+TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID", "-1000000000000"))  # замените на свой ID группы
 
 FORBIDDEN_LINKS = ["http", "https", "t.me/", "bit.ly"]
