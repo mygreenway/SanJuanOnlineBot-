@@ -91,19 +91,19 @@ async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_link = f"tg://user?id={user.id}"
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Responder", callback_data=f"responder_{user.id}")]
+        [InlineKeyboardButton("📨 Responder", callback_data=f"responder_{user.id}")]
     ])
 
     await context.bot.send_message(
         chat_id=ADMIN_ID,
         text=(
-            f"📢 Nueva propuesta de publicidad del usuario {username}:\n"
+            f"📢 Nuevo mensaje del usuario {username} con ideas o propuesta:\n"
             f"{update.message.text}\n\n"
             f"👉 Contactar: {user_link}"
         ),
         reply_markup=keyboard
     )
-    await update.message.reply_text("✅ Tu propuesta fue enviada al administrador. ¡Gracias!")
+    await update.message.reply_text("✅ Tu mensaje fue enviado al admin. ¡Gracias por tu interés!")
 
 # Обработка кнопки "Responder"
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -114,7 +114,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = int(query.data.split("_")[1])
     reply_context[query.from_user.id] = user_id
-    await query.message.reply_text("✍️ Ahora estás respondiendo a ese usuario. Escribí tus mensajes y los enviaré automáticamente.")
+    await query.message.reply_text("✍️ Estás en contacto con esta persona. Escribí lo que quieras responder y yo se lo paso.")
 
 # Админ отвечает (автоматически, если в контексте)
 async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
