@@ -53,6 +53,20 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"Error: {e}")
 
+# Приветствие нового участника с правилами и рекламой
+async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for user in update.message.new_chat_members:
+        await update.message.reply_text(
+            f"👋 ¡Bienvenidx {user.first_name} a <b>San Juan Online 🇦🇷</b>!\n\n"
+            f"🧾 <b>Leé las reglas:</b>\n"
+            f"1️⃣ Prohibido hacer spam\n"
+            f"2️⃣ Nada de porno ni pedofilia\n"
+            f"3️⃣ Prohibido vender drogas\n"
+            f"4️⃣ Respetá siempre a los demás\n\n"
+            f"📢 ¿Querés hacer publicidad en el grupo? Escribí tu propuesta usando /publicidad\n"
+            f"🙌 ¡Gracias por sumarte con buena onda!"
+        )
+
 # Команды
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -74,13 +88,19 @@ async def publicidad(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"📩 Mandá tu propuesta de publicidad en un solo mensaje acá. El admin la revisará y se comunicará con vos si le interesa."
     )
-    # Уведомление админу
     if update.message.reply_to_message is None:
         proposal = update.message.text.replace('/publicidad', '').strip()
         if proposal:
+            user = update.message.from_user
+            username = f"@{user.username}" if user.username else user.first_name
+            user_link = f"tg://user?id={user.id}"
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
-                text=f"📢 Nueva propuesta de publicidad del usuario @{update.message.from_user.username or update.message.from_user.first_name}:\n{proposal}"
+                text=(
+                    f"📢 Nueva propuesta de publicidad del usuario {username}:\n"
+                    f"{proposal}\n\n"
+                    f"👉 Contactar: {user_link}"
+                )
             )
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -101,6 +121,7 @@ def main():
     app.add_handler(CommandHandler("reglas", reglas))
     app.add_handler(CommandHandler("publicidad", publicidad))
 
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 
     app.add_error_handler(error_handler)
