@@ -16,13 +16,10 @@ logger = logging.getLogger(__name__)
 # Переменные окружения
 TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
-ADMIN_ID = int(os.getenv("ADMIN_ID"))  # <== ОБЯЗАТЕЛЬНО укажи в окружении
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-# Запрещённое
 FORBIDDEN_LINKS = ["http", "https", "t.me/", "bit.ly"]
 FORBIDDEN_WORDS = ["puto", "mierda", "idiota", "concha", "porno"]
-
-# Активность
 user_activity = defaultdict(int)
 
 # === Обработка сообщений ===
@@ -37,7 +34,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if any(w in text for w in FORBIDDEN_LINKS + FORBIDDEN_WORDS):
         try:
-            # Mute на 24 часа
             until = datetime.now() + timedelta(hours=24)
             await context.bot.restrict_chat_member(
                 chat_id=GROUP_ID,
@@ -49,10 +45,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🚫 @{user.username or user.first_name} fue silenciado por 24 horas por incumplir las reglas."
             )
         except Exception as e:
-            logger.warning(f"Ошибка при ограничении пользователя: {e}")
+            logger.warning(f"[mute error] {e}")
         return
 
-    # Ответы на кнопки
     if text == "📜 reglas":
         await update.message.reply_text("📌 <b>Reglas del grupo:</b>\n1️⃣ Respeto\n2️⃣ Sin spam\n3️⃣ Contenido 18+ con cuidado\n🧵 ¡Gracias por colaborar!")
     elif text == "💬 escribile al admin":
@@ -90,8 +85,8 @@ async def send_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "📊 Lxs más charlatanes del grupo:\n"
     for user_id, count in top:
         try:
-            user = await context.bot.get_chat_member(GROUP_ID, user_id)
-            msg += f"• {user.user.first_name}: {count} mensajes\n"
+            member = await context.bot.get_chat_member(GROUP_ID, user_id)
+            msg += f"• {member.user.first_name}: {count} mensajes\n"
         except:
             continue
     await update.message.reply_text(msg)
@@ -114,23 +109,29 @@ async def daily_post(context: ContextTypes.DEFAULT_TYPE):
         text="☀️ ¡Buen día a todes! ¿Qué pensás del tema de hoy?\n#CharlitaDelDía"
     )
 
+# === Обработка ошибок ===
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"❗ Error: {context.error}")
+
 # === Главная ===
 def main():
     print("✅ Bot is starting...")
-
     defaults = Defaults(parse_mode="HTML")
     app = Application.builder().token(TOKEN).defaults(defaults).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("report", report))
     app.add_handler(CommandHandler("stats", send_stats))
-    app.add_handler(CommandHandler("rules", rules))  # <== Новая команда
+    app.add_handler(CommandHandler("rules", rules))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
 
+    app.add_error_handler(error_handler)
+
     app.job_queue.run_daily(daily_post, time=datetime.strptime("09:00", "%H:%M").time())
-    app.run_polling()
+
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
