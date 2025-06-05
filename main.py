@@ -6,7 +6,7 @@ from collections import defaultdict
 from telegram import Update, ReplyKeyboardMarkup, ChatPermissions
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    ContextTypes, filters, Defaults
+    ContextTypes, filters, Defaults, JobQueue, AIORateLimiter
 )
 
 # Логирование
@@ -116,8 +116,15 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 # === Главная ===
 def main():
     print("✅ Bot is starting...")
+
     defaults = Defaults(parse_mode="HTML")
-    app = Application.builder().token(TOKEN).defaults(defaults).build()
+    job_queue = JobQueue()
+    app = Application.builder()\
+        .token(TOKEN)\
+        .defaults(defaults)\
+        .job_queue(job_queue)\
+        .rate_limiter(AIORateLimiter())\
+        .build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("report", report))
