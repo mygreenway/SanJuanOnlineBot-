@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from collections import defaultdict
 
@@ -15,12 +16,13 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
+BOT_USERNAME = os.getenv("BOT_USERNAME")  # например, 'SanJuanPublicidadBot'
 
 FORBIDDEN_LINKS = ["http", "https", "t.me/", "bit.ly"]
 
 user_warnings = defaultdict(int)
 
-# Обработка сообщений
+# Обработка сообщений в группе (модерация)
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -53,7 +55,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"Error: {e}")
 
-# Приветствие нового участника с правилами и рекламой
+# Приветствие нового участника с правилами и рекламной ссылкой
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for user in update.message.new_chat_members:
         await update.message.reply_text(
@@ -63,16 +65,42 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"2️⃣ Nada de porno ni pedofilia\n"
             f"3️⃣ Prohibido vender drogas\n"
             f"4️⃣ Respetá siempre a los demás\n\n"
-            f"📢 ¿Querés hacer publicidad en el grupo? Escribí tu propuesta usando /publicidad\n"
+            f"📢 ¿Querés hacer publicidad en el grupo?\n"
+            f"Escribile al bot 👉 <a href='https://t.me/{BOT_USERNAME}'>@{BOT_USERNAME}</a>\n\n"
             f"🙌 ¡Gracias por sumarte con buena onda!"
         )
 
-# Команды
+# Старт в личке — запуск диалога по рекламе
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 ¡Buenas! Soy el bot oficial de San Juan Online 🇦🇷. Estoy para mantener el orden del grupo."
-    )
+    if update.message.chat.type == 'private':
+        await update.message.reply_text(
+            "👋 Hola! Escribí tu propuesta de publicidad en un solo mensaje y la enviaré al admin."
+        )
+    else:
+        await update.message.reply_text(
+            "👋 ¡Buenas! Soy el bot oficial de San Juan Online 🇦🇷. Estoy para mantener el orden del grupo."
+        )
 
+# Получение предложения в личке и пересылка админу
+async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type != 'private':
+        return
+
+    user = update.message.from_user
+    username = f"@{user.username}" if user.username else user.first_name
+    user_link = f"tg://user?id={user.id}"
+
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=(
+            f"📢 Nueva propuesta de publicidad del usuario {username}:\n"
+            f"{update.message.text}\n\n"
+            f"👉 Contactar: {user_link}"
+        )
+    )
+    await update.message.reply_text("✅ Tu propuesta fue enviada al administrador. ¡Gracias!")
+
+# /reglas
 async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reglas_text = (
         "📜 <b>Reglas del grupo:</b>\n"
@@ -84,25 +112,7 @@ async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(reglas_text)
 
-async def publicidad(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"📩 Mandá tu propuesta de publicidad en un solo mensaje acá. El admin la revisará y se comunicará con vos si le interesa."
-    )
-    if update.message.reply_to_message is None:
-        proposal = update.message.text.replace('/publicidad', '').strip()
-        if proposal:
-            user = update.message.from_user
-            username = f"@{user.username}" if user.username else user.first_name
-            user_link = f"tg://user?id={user.id}"
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=(
-                    f"📢 Nueva propuesta de publicidad del usuario {username}:\n"
-                    f"{proposal}\n\n"
-                    f"👉 Contactar: {user_link}"
-                )
-            )
-
+# Ошибки
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"❗ Error: {context.error}")
 
@@ -119,10 +129,10 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reglas", reglas))
-    app.add_handler(CommandHandler("publicidad", publicidad))
 
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, publicidad_chat))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, handle_messages))
 
     app.add_error_handler(error_handler)
 
