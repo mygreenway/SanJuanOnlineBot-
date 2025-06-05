@@ -3,26 +3,24 @@ import logging
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-from telegram import Update, ReplyKeyboardMarkup, ChatPermissions
+from telegram import Update, ChatPermissions
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    ContextTypes, filters, Defaults, JobQueue, AIORateLimiter
+    ContextTypes, filters, Defaults, AIORateLimiter
 )
 
-# Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Переменные окружения
 TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 FORBIDDEN_LINKS = ["http", "https", "t.me/", "bit.ly"]
-FORBIDDEN_WORDS = ["puto", "mierda", "idiota", "concha", "porno"]
-user_activity = defaultdict(int)
 
-# === Обработка сообщений ===
+user_warnings = defaultdict(int)
+
+# Обработка сообщений
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -30,113 +28,82 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.lower()
     user = update.message.from_user
     user_id = user.id
-    user_activity[user_id] += 1
 
-    if any(w in text for w in FORBIDDEN_LINKS + FORBIDDEN_WORDS):
+    if any(link in text for link in FORBIDDEN_LINKS):
         try:
-            until = datetime.now() + timedelta(hours=24)
-            await context.bot.restrict_chat_member(
-                chat_id=GROUP_ID,
-                user_id=user_id,
-                permissions=ChatPermissions(can_send_messages=False),
-                until_date=until
-            )
-            await update.message.reply_text(
-                f"🚫 @{user.username or user.first_name} fue silenciado por 24 horas por incumplir las reglas."
-            )
+            await update.message.delete()
+            user_warnings[user_id] += 1
+            if user_warnings[user_id] == 1:
+                await context.bot.send_message(
+                    chat_id=GROUP_ID,
+                    text=f"⚠️ Che @{user.username or user.first_name}, no podés mandar links en el grupo. Próxima vez, mute por 24 horas."
+                )
+            elif user_warnings[user_id] > 1:
+                until = datetime.now() + timedelta(hours=24)
+                await context.bot.restrict_chat_member(
+                    chat_id=GROUP_ID,
+                    user_id=user_id,
+                    permissions=ChatPermissions(can_send_messages=False),
+                    until_date=until
+                )
+                await context.bot.send_message(
+                    chat_id=GROUP_ID,
+                    text=f"🚫 @{user.username or user.first_name} silenciado por 24 horas por insistir con links."
+                )
         except Exception as e:
-            logger.warning(f"[mute error] {e}")
-        return
+            logger.warning(f"Error: {e}")
 
-    if text == "📜 reglas":
-        await update.message.reply_text("📌 <b>Reglas del grupo:</b>\n1️⃣ Respeto\n2️⃣ Sin spam\n3️⃣ Contenido 18+ con cuidado\n🧵 ¡Gracias por colaborar!")
-    elif text == "💬 escribile al admin":
-        await update.message.reply_text(f"📩 <a href='tg://user?id={ADMIN_ID}'>Hacé click acá para hablar con el admin</a>")
-    elif text == "🤖 sobre el bot":
-        await update.message.reply_text("🤖 Soy un bot que ayuda a mantener orden y buena onda en el grupo ✨")
-
-# === Приветствие ===
-async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    for user in update.message.new_chat_members:
-        keyboard = [["📜 Reglas", "💬 Escribile al admin"], ["🤖 Sobre el bot"]]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text(
-            f"👋 ¡Bienvenidx {user.first_name} a <b>San Juan Online 🇦🇷</b>! Acá compartimos buena onda y respeto 🤝",
-            reply_markup=reply_markup
-        )
-
-# === Команды ===
+# Команды
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["📜 Reglas", "💬 Escribile al admin"], ["🤖 Sobre el bot"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "¡Hola! Soy el bot oficial de <b>San Juan Online 🇦🇷</b> 🤖\n¿En qué te puedo dar una mano?",
-        reply_markup=reply_markup
+        "👋 ¡Buenas! Soy el bot oficial de San Juan Online 🇦🇷. Estoy para mantener el orden del grupo."
     )
 
-async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🛡️ Gracias por avisar. El equipo va a revisarlo 👀")
+async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reglas_text = (
+        "📜 <b>Reglas del grupo:</b>\n"
+        "1️⃣ Prohibido hacer spam.\n"
+        "2️⃣ Prohibido compartir pornografía y pedofilia.\n"
+        "3️⃣ Prohibido vender drogas.\n"
+        "4️⃣ Respetá siempre a los demás, cero agresión ni insultos.\n\n"
+        "Gracias por respetar las reglas 👌"
+    )
+    await update.message.reply_text(reglas_text)
 
-async def send_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    top = sorted(user_activity.items(), key=lambda x: x[1], reverse=True)[:5]
-    if not top:
-        await update.message.reply_text("Todavía no hay actividad registrada.")
-        return
-    msg = "📊 Lxs más charlatanes del grupo:\n"
-    for user_id, count in top:
-        try:
-            member = await context.bot.get_chat_member(GROUP_ID, user_id)
-            msg += f"• {member.user.first_name}: {count} mensajes\n"
-        except:
-            continue
-    await update.message.reply_text(msg)
-
-async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def publicidad(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "<b>📜 Reglas del grupo</b>\n"
-        "1️⃣ Respeto mutuo\n"
-        "2️⃣ Sin spam ni links\n"
-        "3️⃣ Contenido 18+ solo si es aceptado por la comunidad\n"
-        "4️⃣ Privados con respeto\n"
-        "5️⃣ Admins se reservan el derecho de moderar\n\n"
-        "✅ Si colaboramos, el grupo será divertido y seguro para todes."
+        f"📩 Mandá tu propuesta de publicidad en un solo mensaje acá. El admin la revisará y se comunicará con vos si le interesa."
     )
+    # Уведомление админу
+    if update.message.reply_to_message is None:
+        proposal = update.message.text.replace('/publicidad', '').strip()
+        if proposal:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"📢 Nueva propuesta de publicidad del usuario @{update.message.from_user.username or update.message.from_user.first_name}:\n{proposal}"
+            )
 
-# === Автопост в 09:00 ===
-async def daily_post(context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(
-        chat_id=GROUP_ID,
-        text="☀️ ¡Buen día a todes! ¿Qué pensás del tema de hoy?\n#CharlitaDelDía"
-    )
-
-# === Обработка ошибок ===
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"❗ Error: {context.error}")
 
-# === Главная ===
-def main():
-    print("✅ Bot is starting...")
+# Главная
 
+def main():
     defaults = Defaults(parse_mode="HTML")
-    job_queue = JobQueue()
+
     app = Application.builder()\
         .token(TOKEN)\
         .defaults(defaults)\
-        .job_queue(job_queue)\
         .rate_limiter(AIORateLimiter())\
         .build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("report", report))
-    app.add_handler(CommandHandler("stats", send_stats))
-    app.add_handler(CommandHandler("rules", rules))
+    app.add_handler(CommandHandler("reglas", reglas))
+    app.add_handler(CommandHandler("publicidad", publicidad))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
 
     app.add_error_handler(error_handler)
-
-    app.job_queue.run_daily(daily_post, time=datetime.strptime("09:00", "%H:%M").time())
 
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
