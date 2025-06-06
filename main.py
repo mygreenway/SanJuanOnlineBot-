@@ -20,41 +20,56 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 
 FORBIDDEN_LINKS = ["http", "https", "t.me/", "bit.ly"]
+FORBIDDEN_WORDS = [
+    "sexting", "cogiendo", "videollamada", "encuentros", "contenido", "flores",
+    "1g", "2g", "3g", "delivery", "nieve", "tussy", "global66", "mercado pago", "prex"
+]
+
 user_warnings = defaultdict(int)
 reply_context = {}  # admin_id -> user_id
 
-# Обработка сообщений в группе
+# === Модерация сообщений ===
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+    if not update.message:
         return
-    text = update.message.text.lower()
+
+    text = (update.message.text or "").lower()
     user = update.message.from_user
     user_id = user.id
+    chat_id = update.message.chat.id
 
-    if any(link in text for link in FORBIDDEN_LINKS):
+    # Удаление за запрещённые слова или пересланные сообщения
+    if any(w in text for w in FORBIDDEN_WORDS) or update.message.forward_from or update.message.forward_sender_name:
         try:
             await update.message.delete()
             user_warnings[user_id] += 1
+
             if user_warnings[user_id] == 1:
                 await context.bot.send_message(
-                    chat_id=GROUP_ID,
-                    text=f"⚠️ Che @{user.username or user.first_name}, no podés mandar links en el grupo. Próxima vez, mute por 24 horas."
+                    chat_id=chat_id,
+                    text=f"⚠️ @{user.username or user.first_name}, ese tipo de contenido no está permitido. Otra infracción = mute."
                 )
-            elif user_warnings[user_id] > 1:
+            elif user_warnings[user_id] >= 2:
                 until = datetime.now() + timedelta(hours=24)
                 await context.bot.restrict_chat_member(
-                    chat_id=GROUP_ID,
+                    chat_id=chat_id,
                     user_id=user_id,
                     permissions=ChatPermissions(can_send_messages=False),
                     until_date=until
                 )
                 await context.bot.send_message(
-                    chat_id=GROUP_ID,
-                    text=f"🚫 @{user.username or user.first_name} silenciado por 24 horas por insistir con links."
+                    chat_id=chat_id,
+                    text=f"🚫 @{user.username or user.first_name} fue silenciado por 24 horas por repetir contenido prohibido."
                 )
         except Exception as e:
-            logger.warning(f"Error: {e}")
+            logger.warning(f"[Moderation error] {e}")
+        return
 
+# === Остальной функционал ===
+# (без изменений: welcome, start, publicidad_chat, responder, reglas, etc.)
+# Ниже будет вставлен весь предыдущий код, объединённый с новым правилом модерации
+
+# Остальной код добавляется выше
 # Приветствие
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for user in update.message.new_chat_members:
@@ -70,7 +85,6 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🙌 ¡Gracias por sumarte con buena onda!"
         )
 
-# Старт в личке
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == 'private':
         await update.message.reply_text(
@@ -81,19 +95,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👋 ¡Buenas! Soy el bot oficial de San Juan Online 🇦🇷. Estoy para mantener el orden del grupo."
         )
 
-# Получение предложения в личке
 async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != 'private':
         return
-
     user = update.message.from_user
     username = f"@{user.username}" if user.username else user.first_name
     user_link = f"tg://user?id={user.id}"
-
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📨 Responder", callback_data=f"responder_{user.id}")]
     ])
-
     await context.bot.send_message(
         chat_id=ADMIN_ID,
         text=(
@@ -105,27 +115,22 @@ async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text("✅ Tu mensaje fue enviado al admin. ¡Gracias por tu interés!")
 
-# Обработка кнопки "Responder"
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not query.data.startswith("responder_"):
         return
-
     user_id = int(query.data.split("_")[1])
     reply_context[query.from_user.id] = user_id
     await query.message.reply_text("✍️ Estás en contacto con esta persona. Escribí lo que quieras responder y yo se lo paso.")
 
-# Админ отвечает (автоматически, если в контексте)
 async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.id != ADMIN_ID:
         return
-
     admin_id = update.message.from_user.id
     target_id = reply_context.get(admin_id)
     if not target_id:
         return
-
     try:
         await context.bot.send_message(chat_id=target_id, text=update.message.text)
         await update.message.reply_text("✅ Respuesta enviada al usuario.")
@@ -133,7 +138,6 @@ async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ No se pudo enviar la respuesta.")
         logger.error(f"Error al responder: {e}")
 
-# /reglas
 async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reglas_text = (
         "📜 <b>Reglas del grupo:</b>\n"
@@ -145,12 +149,10 @@ async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(reglas_text)
 
-# Ошибки
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"❗ Error: {context.error}")
 
-# Главная
-
+# === Главная ===
 def main():
     defaults = Defaults(parse_mode="HTML")
     app = Application.builder()\
@@ -161,7 +163,6 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reglas", reglas))
-
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, publicidad_chat))
