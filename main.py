@@ -34,17 +34,21 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
+    user = update.message.from_user
+    user_id = user.id
+    chat_id = update.message.chat.id
+
+    # Пропускаем администратора
+    if user_id == ADMIN_ID:
+        return
+
     # Удаление пересланных сообщений
     if update.message.forward_from or update.message.forward_sender_name:
         await update.message.delete()
         return
 
-    user = update.message.from_user
-    user_id = user.id
-    chat_id = update.message.chat.id
     text = (update.message.text or update.message.caption or "").lower()
 
-    # Удаляем только если есть слово И один из признаков
     if any(w in text for w in FORBIDDEN_WORDS) and any(s in text for s in SPAM_SIGNS):
         try:
             await update.message.delete()
@@ -70,7 +74,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"[Moderation error] {e}")
 
-# Остальной функционал без изменений
+# === Приветствие ===
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for user in update.message.new_chat_members:
         await update.message.reply_text(
@@ -85,18 +89,20 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🙌 ¡Gracias por sumarte con buena onda!"
         )
 
+# === Команда /start ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == 'private':
         await update.message.reply_text(
-        "👋 ¡Hola! Podés escribirme si tenés ideas, propuestas, dudas o querés hacer publicidad.\n"
-        "📝 Mandá tu mensaje en un solo bloque y se lo pasaré al admin.\n"
-        "Gracias por comunicarte 🤝"
-    )
+            "👋 ¡Hola! Podés escribirme si tenés ideas, propuestas, dudas o querés hacer publicidad.\n"
+            "📝 Mandá tu mensaje en un solo bloque y se lo pasaré al admin.\n"
+            "Gracias por comunicarte 🤝"
+        )
     else:
         await update.message.reply_text(
             "👋 ¡Buenas! Soy el bot oficial de San Juan Online 🇦🇷. Estoy para mantener el orden del grupo."
         )
 
+# === Обработка сообщений администратору ===
 async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != 'private':
         return
@@ -117,6 +123,7 @@ async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text("✅ Tu mensaje fue enviado al admin. ¡Gracias por tu interés!")
 
+# === Ответ администратора через бота ===
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -127,30 +134,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text("✍️ Estás en contacto con esta persona. Escribí lo que quieras responder y yo se lo paso.")
 
 async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Разрешаем ответы только из приватного чата
     if update.message.chat.type != 'private':
         return
-
     admin_id = update.message.from_user.id
     target_id = reply_context.get(admin_id)
 
-    # Если нет активного контекста ответа — ничего не делаем
     if not target_id or target_id == admin_id:
         await update.message.reply_text("❌ No hay contexto activo para responder.")
         return
 
     try:
-        # Отправляем сообщение пользователю
         await context.bot.send_message(chat_id=target_id, text=update.message.text)
         await update.message.reply_text("✅ Respuesta enviada al usuario.")
-
-        # Очищаем контекст, чтобы избежать случайных повторов
         del reply_context[admin_id]
-
     except Exception as e:
         await update.message.reply_text("❌ No se pudo enviar la respuesta.")
         logger.error(f"[Admin reply error] {e}")
 
+# === Команда /reglas ===
 async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reglas_text = (
         "📜 <b>Reglas del grupo:</b>\n"
@@ -162,9 +163,11 @@ async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(reglas_text)
 
+# === Обработка ошибок ===
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"❗ Error: {context.error}")
 
+# === Запуск ===
 def main():
     defaults = Defaults(parse_mode="HTML")
     app = Application.builder()\
