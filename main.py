@@ -27,7 +27,7 @@ FORBIDDEN_WORDS = [
 SPAM_SIGNS = ["1g", "2g", "3g", "$", "precio", "t.me", "bit.ly", "🔥", "🍑", "❄️", "📞"]
 
 user_warnings = defaultdict(int)
-reply_context = {}  # admin_id -> user_id
+reply_context = {}  # admin_id -> user_id (устанавливается только при Responder)
 
 # === Модерация сообщений ===
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -88,8 +88,10 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == 'private':
         await update.message.reply_text(
-        "👋 ¡Hola! Podés escribirme si tenés ideas, propuestas, dudas o querés hacer publicidad.\n"
-        "📝 Mandá tu mensaje en un solo bloque y se lo pasaré al admin.\n"
+        "👋 ¡Hola! Podés escribirme si tenés ideas, propuestas, dudas o querés hacer publicidad.
+"
+        "📝 Mandá tu mensaje en un solo bloque y se lo pasaré al admin.
+"
         "Gracias por comunicarte 🤝"
     )
     else:
@@ -123,8 +125,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not query.data.startswith("responder_"):
         return
     user_id = int(query.data.split("_")[1])
-    reply_context[query.from_user.id] = user_id
-    await query.message.reply_text("✍️ Estás en contacto con esta persona. Escribí lo que quieras responder y yo se lo paso.")
+    # Обновляем контекст только по нажатию кнопки
+        await query.message.reply_text("✍️ Estás en contacto con esta persona. Escribí lo que quieras responder y yo se lo paso.")
 
 async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Разрешаем ответы только из приватного чата
