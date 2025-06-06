@@ -88,8 +88,10 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == 'private':
         await update.message.reply_text(
-            "👋 Hola! Escribí tu propuesta de publicidad en un solo mensaje y la enviaré al admin."
-        )
+        "👋 ¡Hola! Podés escribirme si tenés ideas, propuestas, dudas o querés hacer publicidad.\n"
+        "📝 Mandá tu mensaje en un solo bloque y se lo pasaré al admin.\n"
+        "Gracias por comunicarte 🤝"
+    )
     else:
         await update.message.reply_text(
             "👋 ¡Buenas! Soy el bot oficial de San Juan Online 🇦🇷. Estoy para mantener el orden del grupo."
