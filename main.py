@@ -14,18 +14,18 @@ from telegram.ext import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Константы
+# Переменные окружения
 TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 
+# Фильтры и счётчики
 FORBIDDEN_WORDS = [
     "sexting", "cogiendo", "videollamada", "encuentros", "contenido",
     "flores", "nieve", "tussy", "global66", "mercado pago", "prex", "sexo"
 ]
 SPAM_SIGNS = ["1g", "2g", "3g", "$", "precio", "t.me", "bit.ly", "🔥", "🍑", "❄️", "📞"]
-
 user_warnings = defaultdict(int)
 reply_context = {}
 
@@ -98,7 +98,7 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🙌 ¡Gracias por sumarte con buena onda!"
         )
 
-# === /start ===
+# === Команда /start ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == 'private':
         await update.message.reply_text(
@@ -111,7 +111,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👋 ¡Buenas! Soy el bot oficial de San Juan Online 🇦🇷. Estoy para mantener el orden del grupo."
         )
 
-# === Связь с админом ===
+# === Получение предложений от пользователей ===
 async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != 'private':
         return
@@ -132,7 +132,7 @@ async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text("✅ Tu mensaje fue enviado al admin. ¡Gracias por tu interés!")
 
-# === Ответ админа пользователю ===
+# === Ответ от админа пользователю ===
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -170,7 +170,7 @@ async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(reglas_text)
 
-# === Обработка ошибок ===
+# === Ошибки ===
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"❗ Error: {context.error}")
 
