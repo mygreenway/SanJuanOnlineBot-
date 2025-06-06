@@ -10,54 +10,42 @@ from telegram.ext import (
     CallbackQueryHandler
 )
 
-# Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Переменные окружения
 TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 
-# Фильтры и счётчики
-FORBIDDEN_WORDS = [
-    "sexting", "cogiendo", "videollamada", "encuentros", "contenido",
-    "flores", "nieve", "tussy", "global66", "mercado pago", "prex", "sexo"
-]
-SPAM_SIGNS = ["1g", "2g", "3g", "$", "precio", "t.me", "bit.ly", "🔥", "🍑", "❄️", "📞"]
 user_warnings = defaultdict(int)
-reply_context = {}
+reply_context = {}  # admin_id -> user_id
 
 # === Модерация сообщений ===
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
-    user = update.message.from_user
-    user_id = user.id
-    chat_id = update.message.chat.id
-
-    # Исключаем администратора
-    if user_id == ADMIN_ID:
+    # Удаление пересланных сообщений
+    if update.message.forward_from or update.message.forward_sender_name:
+        await update.message.delete()
         return
 
-    # Удаление любых пересланных сообщений
-    if (
-        update.message.forward_origin or
-        update.message.forward_from or
-        update.message.forward_sender_name or
-        update.message.is_automatic_forward
-    ):
-        try:
-            await update.message.delete()
-            return
-        except Exception as e:
-            logger.warning(f"[Forward delete error] {e}")
-            return
+    user = update.message.from_user
+    user_id = user.id
 
-    # Проверка на запрещённый текст
+    # ❗ Не трогаем владельца и GroupAnonymousBot
+    if user_id in [ADMIN_ID, 1087968824]:
+        return
+
     text = (update.message.text or update.message.caption or "").lower()
+
+    FORBIDDEN_WORDS = [
+        "sexting", "cogiendo", "videollamada", "encuentros", "contenido", "flores",
+        "nieve", "tussy", "global66", "mercado pago", "prex", "sexo"
+    ]
+    SPAM_SIGNS = ["1g", "2g", "3g", "$", "precio", "t.me", "bit.ly", "🔥", "🍑", "❄️", "📞"]
+
     if any(w in text for w in FORBIDDEN_WORDS) and any(s in text for s in SPAM_SIGNS):
         try:
             await update.message.delete()
@@ -65,19 +53,19 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if user_warnings[user_id] == 1:
                 await context.bot.send_message(
-                    chat_id=chat_id,
+                    chat_id=update.message.chat.id,
                     text=f"⚠️ @{user.username or user.first_name}, ese tipo de contenido no está permitido. Otra infracción = mute."
                 )
             elif user_warnings[user_id] >= 2:
                 until = datetime.now() + timedelta(hours=24)
                 await context.bot.restrict_chat_member(
-                    chat_id=chat_id,
+                    chat_id=update.message.chat.id,
                     user_id=user_id,
                     permissions=ChatPermissions(can_send_messages=False),
                     until_date=until
                 )
                 await context.bot.send_message(
-                    chat_id=chat_id,
+                    chat_id=update.message.chat.id,
                     text=f"🚫 @{user.username or user.first_name} fue silenciado por 24 horas por repetir contenido prohibido."
                 )
         except Exception as e:
@@ -98,7 +86,7 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🙌 ¡Gracias por sumarte con buena onda!"
         )
 
-# === Команда /start ===
+# === Команды ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type == 'private':
         await update.message.reply_text(
@@ -111,7 +99,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👋 ¡Buenas! Soy el bot oficial de San Juan Online 🇦🇷. Estoy para mantener el orden del grupo."
         )
 
-# === Получение предложений от пользователей ===
 async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != 'private':
         return
@@ -132,7 +119,6 @@ async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text("✅ Tu mensaje fue enviado al admin. ¡Gracias por tu interés!")
 
-# === Ответ от админа пользователю ===
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -145,11 +131,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != 'private':
         return
+
     admin_id = update.message.from_user.id
     target_id = reply_context.get(admin_id)
+
     if not target_id or target_id == admin_id:
         await update.message.reply_text("❌ No hay contexto activo para responder.")
         return
+
     try:
         await context.bot.send_message(chat_id=target_id, text=update.message.text)
         await update.message.reply_text("✅ Respuesta enviada al usuario.")
@@ -158,7 +147,6 @@ async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ No se pudo enviar la respuesta.")
         logger.error(f"[Admin reply error] {e}")
 
-# === /reglas ===
 async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reglas_text = (
         "📜 <b>Reglas del grupo:</b>\n"
@@ -170,11 +158,9 @@ async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(reglas_text)
 
-# === Ошибки ===
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"❗ Error: {context.error}")
 
-# === Запуск ===
 def main():
     defaults = Defaults(parse_mode="HTML")
     app = Application.builder()\
@@ -190,8 +176,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, publicidad_chat))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, handle_messages))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, admin_reply))
-    app.add_error_handler(error_handler)
 
+    app.add_error_handler(error_handler)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
