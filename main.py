@@ -1,190 +1,142 @@
 import os
 import logging
-import asyncio
-import re
 from datetime import datetime, timedelta
 from collections import defaultdict
 
 from telegram import Update, ChatPermissions, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    ContextTypes, filters, Defaults, AIORateLimiter,
-    CallbackQueryHandler
+    ContextTypes, filters, Defaults, CallbackQueryHandler
 )
 
+# Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Переменные окружения
 TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-BOT_USERNAME = os.getenv("BOT_USERNAME")
 
-FORBIDDEN_WORDS = [
-    "sexting", "cogiendo", "videollamada", "encuentros", "contenido", "flores",
-    "nieve", "tussy", "global66", "mercado pago", "prex", "sexo"
-]
-SPAM_SIGNS = ["1g", "2g", "3g", "$", "precio", "t.me", "bit.ly", "🔥", "🍑", "❄️", "📞"]
-
+FORBIDDEN_LINKS = ["http", "https", "t.me/", "bit.ly"]
+FORBIDDEN_WORDS = ["porno", "pedofilia", "narcotico"]
 user_warnings = defaultdict(int)
-reply_context = {}  # admin_id -> user_id (устанавливается только при Responder)
+reply_context = {}
 
-# === Модерация сообщений ===
-async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
+# === Обработка сообщений ===
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    if not message or not message.text:
         return
 
-    # Удаление пересланных сообщений
-    if update.message.forward_from or update.message.forward_sender_name:
-        await update.message.delete()
+    user_id = message.from_user.id
+    text = message.text.lower()
+
+    # Удаление ссылок и предупреждение / мут
+    if any(link in text for link in FORBIDDEN_LINKS):
+        await message.delete()
+        user_warnings[user_id] += 1
+
+        if user_warnings[user_id] >= 2:
+            until = datetime.now() + timedelta(hours=24)
+            await context.bot.restrict_chat_member(
+                chat_id=GROUP_ID,
+                user_id=user_id,
+                permissions=ChatPermissions(can_send_messages=False),
+                until_date=until
+            )
+            await context.bot.send_message(
+                chat_id=GROUP_ID,
+                text=f"🚫 @{message.from_user.username or message.from_user.first_name} fue silenciado por 24 horas por spam."
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=GROUP_ID,
+                text=f"⚠️ @{message.from_user.username or message.from_user.first_name}, no se permiten links. Un aviso más y serás silenciado."
+            )
         return
 
-    user = update.message.from_user
-    user_id = user.id
-    chat_id = update.message.chat.id
-    text = (update.message.text or update.message.caption or "").lower()
-
-    # Удаляем только если есть слово И один из признаков
-    if any(w in text for w in FORBIDDEN_WORDS) and any(s in text for s in SPAM_SIGNS):
-        try:
-            await update.message.delete()
-            user_warnings[user_id] += 1
-
-            if user_warnings[user_id] == 1:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"⚠️ @{user.username or user.first_name}, ese tipo de contenido no está permitido. Otra infracción = mute."
-                )
-            elif user_warnings[user_id] >= 2:
-                until = datetime.now() + timedelta(hours=24)
-                await context.bot.restrict_chat_member(
-                    chat_id=chat_id,
-                    user_id=user_id,
-                    permissions=ChatPermissions(can_send_messages=False),
-                    until_date=until
-                )
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"🚫 @{user.username or user.first_name} fue silenciado por 24 horas por repetir contenido prohibido."
-                )
-        except Exception as e:
-            logger.warning(f"[Moderation error] {e}")
-
-# Остальной функционал без изменений
-async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    for user in update.message.new_chat_members:
-        await update.message.reply_text(
-            f"👋 ¡Bienvenidx {user.first_name} a <b>San Juan Online 🇦🇷</b>!\n\n"
-            f"🧾 <b>Leé las reglas:</b>\n"
-            f"1️⃣ Prohibido hacer spam\n"
-            f"2️⃣ Nada de porno ni pedofilia\n"
-            f"3️⃣ Prohibido vender drogas\n"
-            f"4️⃣ Respetá siempre a los demás\n\n"
-            f"📢 ¿Tenés propuestas, ideas o querés hacer publicidad?\n"
-            f"Escribile al admin a través del bot 👉 <a href='https://t.me/{BOT_USERNAME}'>@{BOT_USERNAME}</a>\n\n"
-            f"🙌 ¡Gracias por sumarte con buena onda!"
-        )
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.type == 'private':
-        await update.message.reply_text(
-        "👋 ¡Hola! Podés escribirme si tenés ideas, propuestas, dudas o querés hacer publicidad.
-"
-        "📝 Mandá tu mensaje en un solo bloque y se lo pasaré al admin.
-"
-        "Gracias por comunicarte 🤝"
-    )
-    else:
-        await update.message.reply_text(
-            "👋 ¡Buenas! Soy el bot oficial de San Juan Online 🇦🇷. Estoy para mantener el orden del grupo."
-        )
-
-async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.type != 'private':
+    # Запрещённые слова (возможно временно убираем)
+    if any(word in text for word in FORBIDDEN_WORDS):
+        await message.delete()
         return
-    user = update.message.from_user
-    username = f"@{user.username}" if user.username else user.first_name
-    user_link = f"tg://user?id={user.id}"
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📨 Responder", callback_data=f"responder_{user.id}")]
-    ])
-    await context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=(
-            f"📢 Nuevo mensaje del usuario {username} con ideas o propuesta:\n"
-            f"{update.message.text}\n\n"
-            f"👉 Contactar: {user_link}"
-        ),
-        reply_markup=keyboard
-    )
-    await update.message.reply_text("✅ Tu mensaje fue enviado al admin. ¡Gracias por tu interés!")
 
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Ответ администратора через бота
+    if update.effective_chat.id == ADMIN_ID and message.reply_to_message:
+        replied_text = message.reply_to_message.text
+        for user_id, name in reply_context.items():
+            if name in replied_text:
+                try:
+                    await context.bot.send_message(chat_id=user_id, text=message.text)
+                    await message.reply_text("📨 Mensaje enviado al usuario.")
+                except Exception as e:
+                    await message.reply_text(f"❌ No se pudo enviar el mensaje: {e}")
+                break
+
+# === Обработка кнопки "Responder" ===
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if not query.data.startswith("responder_"):
-        return
     user_id = int(query.data.split("_")[1])
-    # Обновляем контекст только по нажатию кнопки
-        await query.message.reply_text("✍️ Estás en contacto con esta persona. Escribí lo que quieras responder y yo se lo paso.")
+    user = await context.bot.get_chat_member(GROUP_ID, user_id)
+    reply_context[user_id] = user.user.first_name
 
-async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Разрешаем ответы только из приватного чата
-    if update.message.chat.type != 'private':
-        return
-
-    admin_id = update.message.from_user.id
-    target_id = reply_context.get(admin_id)
-
-    # Если нет активного контекста ответа — ничего не делаем
-    if not target_id or target_id == admin_id:
-        await update.message.reply_text("❌ No hay contexto activo para responder.")
-        return
-
-    try:
-        # Отправляем сообщение пользователю
-        await context.bot.send_message(chat_id=target_id, text=update.message.text)
-        await update.message.reply_text("✅ Respuesta enviada al usuario.")
-
-        # Очищаем контекст, чтобы избежать случайных повторов
-        del reply_context[admin_id]
-
-    except Exception as e:
-        await update.message.reply_text("❌ No se pudo enviar la respuesta.")
-        logger.error(f"[Admin reply error] {e}")
-
-async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    reglas_text = (
-        "📜 <b>Reglas del grupo:</b>\n"
-        "1️⃣ Prohibido hacer spam.\n"
-        "2️⃣ Prohibido compartir pornografía y pedofilia.\n"
-        "3️⃣ Prohibido vender drogas.\n"
-        "4️⃣ Respetá siempre a los demás, cero agresión ni insultos.\n\n"
-        "Gracias por respetar las reglas 👌"
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"✍️ Estás en contacto con {user.user.first_name}. Escribí lo que quieras responder y yo se lo paso."
     )
-    await update.message.reply_text(reglas_text)
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"❗ Error: {context.error}")
+# === Команда /publicidad ===
+async def publicidad(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📨 Escribir al admin", url=f"https://t.me/{(await context.bot.get_chat(ADMIN_ID)).username}")]
+    ])
+    await update.message.reply_text(
+        "👋 ¡Hola! Podés escribirme si tenés ideas, propuestas, dudas o querés hacer publicidad.\n"
+        "📝 Mandá tu mensaje en un solo bloque y se lo pasaré al admin.\n"
+        "Gracias por comunicarte 🤝",
+        reply_markup=keyboard
+    )
 
+# === Команда /rules ===
+async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "<b>📜 Reglas del grupo</b>\n"
+        "🚫 Prohibido el spam\n"
+        "🚫 Prohibido compartir contenido pornográfico o pedófilo\n"
+        "🚫 Prohibido vender drogas\n"
+        "💬 Publicidad solo previa aprobación\n"
+        "🤝 Respetá a los demás"
+    )
+
+# === Приветствие ===
+async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for user in update.message.new_chat_members:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📨 Escribir al admin", url=f"https://t.me/{(await context.bot.get_chat(ADMIN_ID)).username}")],
+            [InlineKeyboardButton("📜 Reglas", callback_data="rules")],
+            [InlineKeyboardButton("📢 Publicidad", callback_data=f"responder_{user.id}")]
+        ])
+        await update.message.reply_text(
+            f"👋 ¡Bienvenidx {user.first_name} a San Juan Online 🇦🇷!\n"
+            "📌 Recordá: respeto, sin spam, nada de links.\n"
+            "Para ideas o publicidad podés contactarnos:",
+            reply_markup=keyboard
+        )
+
+# === Главная ===
 def main():
     defaults = Defaults(parse_mode="HTML")
-    app = Application.builder()\
-        .token(TOKEN)\
-        .defaults(defaults)\
-        .rate_limiter(AIORateLimiter())\
-        .build()
+    app = Application.builder().token(TOKEN).defaults(defaults).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("reglas", reglas))
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, handle_message))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, publicidad_chat))
-    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, handle_messages))
-    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, admin_reply))
+    app.add_handler(CommandHandler("rules", rules))
+    app.add_handler(CommandHandler("publicidad", publicidad))
+    app.add_handler(CallbackQueryHandler(button_callback, pattern="responder_.*"))
 
-    app.add_error_handler(error_handler)
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    print("✅ Bot is running...")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
