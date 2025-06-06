@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import re
 from datetime import datetime, timedelta
 from collections import defaultdict
 
@@ -19,11 +20,11 @@ GROUP_ID = int(os.getenv("GROUP_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 
-FORBIDDEN_LINKS = ["http", "https", "t.me/", "bit.ly"]
 FORBIDDEN_WORDS = [
     "sexting", "cogiendo", "videollamada", "encuentros", "contenido", "flores",
-    "1g", "2g", "3g", "delivery", "nieve", "tussy", "global66", "mercado pago", "prex"
+    "nieve", "tussy", "global66", "mercado pago", "prex", "sexo"
 ]
+SPAM_SIGNS = ["1g", "2g", "3g", "$", "precio", "t.me", "bit.ly", "🔥", "🍑", "❄️", "📞"]
 
 user_warnings = defaultdict(int)
 reply_context = {}  # admin_id -> user_id
@@ -33,13 +34,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
-    text = (update.message.text or update.message.caption or "").lower()
     user = update.message.from_user
     user_id = user.id
     chat_id = update.message.chat.id
+    text = (update.message.text or update.message.caption or "").lower()
 
-    # Удаление за запрещённые слова или пересланные сообщения
-    if any(w in text for w in FORBIDDEN_WORDS + FORBIDDEN_LINKS) or update.message.forward_from or update.message.forward_sender_name:
+    # Удаляем только если есть слово И один из признаков
+    if any(w in text for w in FORBIDDEN_WORDS) and any(s in text for s in SPAM_SIGNS):
         try:
             await update.message.delete()
             user_warnings[user_id] += 1
@@ -63,14 +64,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         except Exception as e:
             logger.warning(f"[Moderation error] {e}")
-        return
 
-# === Остальной функционал ===
-# (без изменений: welcome, start, publicidad_chat, responder, reglas, etc.)
-# Ниже будет вставлен весь предыдущий код, объединённый с новым правилом модерации
-
-# Остальной код добавляется выше
-# Приветствие
+# Остальной функционал без изменений
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for user in update.message.new_chat_members:
         await update.message.reply_text(
@@ -152,7 +147,6 @@ async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"❗ Error: {context.error}")
 
-# === Главная ===
 def main():
     defaults = Defaults(parse_mode="HTML")
     app = Application.builder()\
