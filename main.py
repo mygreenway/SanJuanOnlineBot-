@@ -34,6 +34,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
+    # Удаление пересланных сообщений
+    if update.message.forward_from or update.message.forward_sender_name:
+        await update.message.delete()
+        return
+
     user = update.message.from_user
     user_id = user.id
     chat_id = update.message.chat.id
@@ -120,18 +125,29 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text("✍️ Estás en contacto con esta persona. Escribí lo que quieras responder y yo se lo paso.")
 
 async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.id != ADMIN_ID:
+    # Разрешаем ответы только из приватного чата
+    if update.message.chat.type != 'private':
         return
+
     admin_id = update.message.from_user.id
     target_id = reply_context.get(admin_id)
-    if not target_id:
+
+    # Если нет активного контекста ответа — ничего не делаем
+    if not target_id or target_id == admin_id:
+        await update.message.reply_text("❌ No hay contexto activo para responder.")
         return
+
     try:
+        # Отправляем сообщение пользователю
         await context.bot.send_message(chat_id=target_id, text=update.message.text)
         await update.message.reply_text("✅ Respuesta enviada al usuario.")
+
+        # Очищаем контекст, чтобы избежать случайных повторов
+        del reply_context[admin_id]
+
     except Exception as e:
         await update.message.reply_text("❌ No se pudo enviar la respuesta.")
-        logger.error(f"Error al responder: {e}")
+        logger.error(f"[Admin reply error] {e}")
 
 async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reglas_text = (
