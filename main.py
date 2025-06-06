@@ -33,13 +33,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
-    text = (update.message.text or "").lower()
+    text = (update.message.text or update.message.caption or "").lower()
     user = update.message.from_user
     user_id = user.id
     chat_id = update.message.chat.id
 
     # Удаление за запрещённые слова или пересланные сообщения
-    if any(w in text for w in FORBIDDEN_WORDS) or update.message.forward_from or update.message.forward_sender_name:
+    if any(w in text for w in FORBIDDEN_WORDS + FORBIDDEN_LINKS) or update.message.forward_from or update.message.forward_sender_name:
         try:
             await update.message.delete()
             user_warnings[user_id] += 1
