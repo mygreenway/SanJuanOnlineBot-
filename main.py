@@ -21,10 +21,18 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 
 FORBIDDEN_WORDS = [
-    "sexting", "cogiendo", "videollamada", "encuentros", "contenido", "flores",
-    "nieve", "tussy", "global66", "mercado pago", "prex", "sexo"
+    "sexting", "cogiendo", "nieve", "tussy", "global66",
+    "mercado pago", "prex", "sexo"
 ]
-SPAM_SIGNS = ["1g", "2g", "3g", "$", "precio", "t.me", "bit.ly", "🔥", "🍑", "❄️", "📞"]
+SPAM_SIGNS = ["1g", "2g", "3g", "t.me", "bit.ly"]
+SMART_SPAM_TRIGGERS = {
+    "words": [
+        "estoy disponible", "amor", "hablen", "soy nueva",
+        "videollamada", "encuentros", "contenido", "flores", "precio", "$"
+    ],
+    "emojis": ["🔥", "🍑", "💋", "❄️", "📞"],
+    "links": ["tiktok.com", "onlyfans", "bit.ly"]
+}
 
 user_warnings = defaultdict(int)
 reply_context = {}
@@ -51,6 +59,15 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if any(w in text for w in FORBIDDEN_WORDS) and any(s in text for s in SPAM_SIGNS):
         await moderate_and_mute(update, context, user, chat_id)
+        return
+
+    if (
+        any(w in text for w in SMART_SPAM_TRIGGERS["words"])
+        and any(e in text for e in SMART_SPAM_TRIGGERS["emojis"])
+        and any(link in text for link in SMART_SPAM_TRIGGERS["links"])
+    ):
+        await moderate_and_mute(update, context, user, chat_id)
+        return
 
 async def moderate_and_mute(update, context, user, chat_id):
     user_id = user.id
@@ -59,10 +76,12 @@ async def moderate_and_mute(update, context, user, chat_id):
         user_warnings[user_id] += 1
 
         if user_warnings[user_id] == 1:
-            await context.bot.send_message(
+            msg = await context.bot.send_message(
                 chat_id=chat_id,
                 text=f"⚠️ @{user.username or user.first_name}, está prohibido hacer spam. Próxima vez = mute."
             )
+            await asyncio.sleep(15)
+            await msg.delete()
         elif user_warnings[user_id] >= 2:
             until = datetime.now() + timedelta(hours=24)
             await context.bot.restrict_chat_member(
@@ -71,10 +90,12 @@ async def moderate_and_mute(update, context, user, chat_id):
                 permissions=ChatPermissions(can_send_messages=False),
                 until_date=until
             )
-            await context.bot.send_message(
+            msg = await context.bot.send_message(
                 chat_id=chat_id,
                 text=f"🚫 @{user.username or user.first_name} fue silenciado por 24 horas por spam."
             )
+            await asyncio.sleep(15)
+            await msg.delete()
     except Exception as e:
         logger.warning(f"[Moderation error] {e}")
 
