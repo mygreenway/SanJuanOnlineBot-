@@ -34,6 +34,8 @@ SMART_SPAM_TRIGGERS = {
     "links": ["tiktok.com", "onlyfans", "bit.ly"]
 }
 
+ALLOWED_LINKS = ["@sanjuanonlinebot", "https://t.me/+pn6lcd0fv5w1ndk8"]
+
 user_warnings = defaultdict(int)
 reply_context = {}
 
@@ -50,12 +52,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await moderate_and_mute(update, context, user, chat_id)
         return
 
-    allowed_links = ["@sanjuanonlinebot", "https://t.me/+pn6lcd0fv5w1ndk8"]
-    if "@" in text or "t.me" in text:
-        if any(link in text for link in allowed_links):
+    if re.search(r'https?://', text):
+        if not any(link in text for link in ALLOWED_LINKS):
+            await moderate_and_mute(update, context, user, chat_id)
             return
-        await moderate_and_mute(update, context, user, chat_id)
-        return
 
     if any(w in text for w in FORBIDDEN_WORDS) and any(s in text for s in SPAM_SIGNS):
         await moderate_and_mute(update, context, user, chat_id)
