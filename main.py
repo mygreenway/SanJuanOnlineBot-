@@ -20,20 +20,6 @@ GROUP_ID = int(os.getenv("GROUP_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 
-FORBIDDEN_WORDS = [
-    "sexting", "cogiendo", "nieve", "tussy", "global66",
-    "mercado pago", "prex", "sexo"
-]
-SPAM_SIGNS = ["1g", "2g", "3g", "t.me", "bit.ly"]
-SMART_SPAM_TRIGGERS = {
-    "words": [
-        "estoy disponible", "amor", "hablen", "soy nueva",
-        "videollamada", "encuentros", "contenido", "flores", "precio", "$"
-    ],
-    "emojis": ["🔥", "🍑", "💋", "❄️", "📞"],
-    "links": ["tiktok.com", "onlyfans", "bit.ly"]
-}
-
 ALLOWED_LINKS = ["@sanjuanonlinebot", "https://t.me/+pn6lcd0fv5w1ndk8"]
 
 user_warnings = defaultdict(int)
@@ -57,17 +43,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await moderate_and_mute(update, context, user, chat_id)
             return
 
-    if any(w in text for w in FORBIDDEN_WORDS) and any(s in text for s in SPAM_SIGNS):
-        await moderate_and_mute(update, context, user, chat_id)
-        return
-
-    if (
-        any(w in text for w in SMART_SPAM_TRIGGERS["words"])
-        and any(e in text for e in SMART_SPAM_TRIGGERS["emojis"])
-        and any(link in text for link in SMART_SPAM_TRIGGERS["links"])
-    ):
-        await moderate_and_mute(update, context, user, chat_id)
-        return
+    if re.search(r'\$\d{3,}', text):  # например: $5000
+        if re.search(r'(gana|dinero|invierte|enlace|haz clic|gratis|registrate|promo)', text):
+            await moderate_and_mute(update, context, user, chat_id)
+            return
 
 async def moderate_and_mute(update, context, user, chat_id):
     user_id = user.id
