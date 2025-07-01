@@ -43,6 +43,11 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await moderate_and_mute(update, context, user, chat_id)
             return
 
+    if re.search(r'@\w{3,}', text):
+        if not any(link in text for link in ALLOWED_LINKS):
+            await moderate_and_mute(update, context, user, chat_id)
+            return
+
     if re.search(r'\$\d{3,}', text):  # например: $5000
         if re.search(r'(gana|dinero|invierte|enlace|haz clic|gratis|registrate|promo)', text):
             await moderate_and_mute(update, context, user, chat_id)
