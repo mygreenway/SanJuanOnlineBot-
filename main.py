@@ -25,7 +25,7 @@ ALLOWED_LINKS = ["@sanjuanonlinebot", "https://t.me/+pn6lcd0fv5w1ndk8"]
 user_warnings = defaultdict(int)
 reply_context = {}
 
-# Основная модерация сообщений
+# --- Обработка сообщений ---
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -40,19 +40,21 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await moderate_and_mute(update, context, user, chat_id)
         return
 
-    # Удаление внешних ссылок (если не в белом списке)
+    # Удаление обычных ссылок
     if re.search(r'https?://', text):
         if not any(link in text for link in ALLOWED_LINKS):
             await moderate_and_mute(update, context, user, chat_id)
             return
 
-    # Удаление упоминаний @ (если не в белом списке)
-    if re.search(r'@\w{3,}', text):
-        if not any(link in text for link in ALLOWED_LINKS):
-            await moderate_and_mute(update, context, user, chat_id)
-            return
+    # Удаление упоминаний @...
+    if '@' in text:
+        explicit_mentions = re.findall(r'@\w{3,}', text)
+        for mention in explicit_mentions:
+            if not any(allowed in mention for allowed in ALLOWED_LINKS):
+                await moderate_and_mute(update, context, user, chat_id)
+                return
 
-# Удаление сообщений + мут при повторе
+# --- Модерация и предупреждения ---
 async def moderate_and_mute(update, context, user, chat_id):
     user_id = user.id
     try:
@@ -83,7 +85,7 @@ async def moderate_and_mute(update, context, user, chat_id):
     except Exception as e:
         logger.warning(f"[Moderation error] {e}")
 
-# Приветствие нового участника (удаляется через 60 сек)
+# --- Приветствие новых участников ---
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for user in update.message.new_chat_members:
         msg = await update.message.reply_text(
@@ -100,11 +102,11 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(60)
         await msg.delete()
 
-# Команда /start
+# --- Команда /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 ¡Hola! Mandá tu mensaje al admin o preguntá dudas. ¡Gracias!")
 
-# Сообщения от пользователей в личку
+# --- Отправка сообщений админу ---
 async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     user_link = f"tg://user?id={user.id}"
@@ -116,7 +118,7 @@ async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text("✅ Mensaje enviado al admin.")
 
-# Ответ от админа через inline-кнопку
+# --- Ответ администратора пользователю ---
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -124,24 +126,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_context[query.from_user.id] = user_id
     await query.message.reply_text("✍️ Escribí tu respuesta:")
 
-# Ответ админа в чат
 async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_id = update.message.from_user.id
     target_id = reply_context.get(admin_id)
-
     if not target_id:
         await update.message.reply_text("❌ No hay contexto activo.")
         return
-
     await context.bot.send_message(chat_id=target_id, text=update.message.text)
     await update.message.reply_text("✅ Respuesta enviada.")
     del reply_context[admin_id]
 
-# Команда /reglas
+# --- Команда /reglas ---
 async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📜 <b>Reglas:</b> No spam, No porno, No drogas, Respeto siempre.")
 
-# Запуск бота
+# --- Запуск бота ---
 def main():
     app = Application.builder().token(TOKEN).defaults(Defaults(parse_mode="HTML")).rate_limiter(AIORateLimiter()).build()
 
