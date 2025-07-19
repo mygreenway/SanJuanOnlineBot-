@@ -12,9 +12,11 @@ from telegram.ext import (
     CallbackQueryHandler
 )
 
+# --- Настройка логов ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- Переменные окружения ---
 TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
@@ -25,13 +27,14 @@ ALLOWED_LINKS = ["@sanjuanonlinebot", "https://t.me/+pn6lcd0fv5w1ndk8"]
 user_warnings = defaultdict(int)
 reply_context = {}
 
+print("✅ BOT ACTIVADO – NUEVA VERSIÓN")  # Для проверки в логах
+
 # --- Обработка сообщений ---
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
     user = update.message.from_user
-    user_id = user.id
     chat_id = update.message.chat.id
     text = (update.message.text or update.message.caption or "").lower()
 
@@ -54,7 +57,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await moderate_and_mute(update, context, user, chat_id)
                 return
 
-# --- Модерация и предупреждения ---
+# --- Модерация и мут ---
 async def moderate_and_mute(update, context, user, chat_id):
     user_id = user.id
     try:
@@ -106,6 +109,10 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 ¡Hola! Mandá tu mensaje al admin o preguntá dudas. ¡Gracias!")
 
+# --- Команда /reglas ---
+async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📜 <b>Reglas:</b> No spam, No porno, No drogas, Respeto siempre.")
+
 # --- Отправка сообщений админу ---
 async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
@@ -118,7 +125,7 @@ async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text("✅ Mensaje enviado al admin.")
 
-# --- Ответ администратора пользователю ---
+# --- Обработка ответа от админа ---
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -135,10 +142,6 @@ async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=target_id, text=update.message.text)
     await update.message.reply_text("✅ Respuesta enviada.")
     del reply_context[admin_id]
-
-# --- Команда /reglas ---
-async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📜 <b>Reglas:</b> No spam, No porno, No drogas, Respeto siempre.")
 
 # --- Запуск бота ---
 def main():
