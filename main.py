@@ -22,7 +22,12 @@ GROUP_ID = int(os.getenv("GROUP_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 
-ALLOWED_LINKS = ["@sanjuanonlinebot", "https://t.me/+pn6lcd0fv5w1ndk8"]
+# --- Разрешённые ссылки ---
+ALLOWED_LINKS = [
+    "@sanjuanonlinebot",
+    "https://t.me/+pn6lcd0fv5w1ndk8",
+    "https://t.me/sanjuan_online"
+]
 
 user_warnings = defaultdict(int)
 reply_context = {}
