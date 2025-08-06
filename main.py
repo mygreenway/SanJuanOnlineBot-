@@ -66,7 +66,7 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.delete()
 
 # --- Модерация и мут ---
-async def moderate_and_mute(update, context, user, chat_id, reason):
+async def moderate_and_mute(update, context, user, chat_id, reason="infracción de reglas"):
     user_id = user.id
     try:
         await update.message.delete()
@@ -123,4 +123,38 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if emoji_count > 10:
         await moderate_and_mute(update, context, user, chat_id, "exceso de emojis")
 
-# Оставшаяся часть скрипта остаётся неизменной
+# --- Связь с админом ---
+async def publicidad_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    user_link = f"tg://user?id={user.id}"
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("📨 Responder", callback_data=f"responder_{user.id}")]])
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"📢 @{user.username or user.first_name}:\n{update.message.text}\n{user_link}",
+        reply_markup=keyboard
+    )
+    await update.message.reply_text("✅ Mensaje enviado al admin.")
+
+# --- Обработка callback-кнопок ---
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "ver_reglas":
+        await query.message.reply_text("📜 <b>Reglas:</b> No spam, No porno, No drogas, Respeto siempre.")
+
+# --- Запуск бота ---
+def main():
+    app = Application.builder().token(TOKEN).defaults(Defaults(parse_mode="HTML")).rate_limiter(AIORateLimiter()).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("reglas", reglas))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, publicidad_chat))
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, handle_messages))
+
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == "__main__":
+    main()
