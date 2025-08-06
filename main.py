@@ -69,7 +69,11 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def moderate_and_mute(update, context, user, chat_id, reason="infracción de reglas"):
     user_id = user.id
     try:
-        await update.message.delete()
+        try:
+            await update.message.delete()
+        except Exception as e:
+            logger.warning(f"[Delete error] {e}")
+
         user_warnings[user_id] += 1
 
         if user_warnings[user_id] == 1:
