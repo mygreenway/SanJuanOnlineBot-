@@ -4,6 +4,7 @@ import asyncio
 import re
 from datetime import datetime, timedelta
 from collections import defaultdict
+from urllib.parse import urlparse
 
 from telegram import Update, ChatPermissions, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -27,6 +28,7 @@ ALLOWED_LINKS = [
     "https://t.me/+pn6lcd0fv5w1ndk8",
     "https://t.me/sanjuan_online"
 ]
+ALLOWED_LINKS = [link.lower() for link in ALLOWED_LINKS]
 
 user_warnings = defaultdict(int)
 reply_context = {}
@@ -100,6 +102,14 @@ async def moderate_and_mute(update, context, user, chat_id, reason="infracción 
     except Exception as e:
         logger.warning(f"[Moderation error] {e}")
 
+# --- Проверка ссылок ---
+def is_allowed_link(text: str) -> bool:
+    text_lower = text.lower()
+    for allowed in ALLOWED_LINKS:
+        if allowed in text_lower:
+            return True
+    return False
+
 # --- Обработка сообщений ---
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -117,12 +127,15 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await moderate_and_mute(update, context, user, chat_id, "reenviar mensajes")
         return
 
+    # Ссылки и упоминания
     link_patterns = [r'https?://', r't\.me/', r'telegram\.me/', r'@\w{3,}']
     for pattern in link_patterns:
-        if re.search(pattern, text) and not any(allowed in text for allowed in ALLOWED_LINKS):
-            await moderate_and_mute(update, context, user, chat_id, "publicar enlaces no permitidos")
-            return
+        if re.search(pattern, text):
+            if not is_allowed_link(text):
+                await moderate_and_mute(update, context, user, chat_id, "publicar enlaces no permitidos")
+                return
 
+    # Ограничение по эмодзи
     emoji_count = len(re.findall(r'[\U0001F600-\U0001F64F]', text))
     if emoji_count > 10:
         await moderate_and_mute(update, context, user, chat_id, "exceso de emojis")
