@@ -1,4 +1,5 @@
-# San Juan Online Bot — fixed
+# -*- coding: utf-8 -*-
+# San Juan Online Bot — stable build (2025-08-09)
 
 import os
 import logging
@@ -7,23 +8,32 @@ import re
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
-from telegram import Update, ChatPermissions, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import (
+    Update, ChatPermissions, InlineKeyboardMarkup, InlineKeyboardButton,
+    LinkPreviewOptions
+)
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     ContextTypes, filters, Defaults, AIORateLimiter,
     CallbackQueryHandler
 )
 
-# --- Логи ---
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
+# ---------------------- LOGGING ----------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger("sanjuan-bot")
 
-# --- ENV ---
+# ---------------------- ENV -------------------------
 TOKEN = os.getenv("BOT_TOKEN")
-GROUP_ID = int(os.getenv("GROUP_ID", "0"))  # опционально
+GROUP_ID = int(os.getenv("GROUP_ID", "0"))      # опционально ограничить одним чатом
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-# --- Разрешённые ссылки ---
+if not TOKEN or not ADMIN_ID:
+    raise RuntimeError("ENV required: BOT_TOKEN, ADMIN_ID. Optional: GROUP_ID")
+
+# ---------------------- SETTINGS --------------------
 ALLOWED_LINKS = [
     "@sanjuanonlinebot",
     "https://t.me/+pn6lcd0fv5w1ndk8",
@@ -31,16 +41,19 @@ ALLOWED_LINKS = [
 ]
 ALLOWED_LINKS = [link.lower() for link in ALLOWED_LINKS]
 
-# --- Разрешённые источники пересылок (ID каналов/чатов) ---
-ALLOWED_FORWARD_CHATS = set()  # например: { -1001234567890 }
+# Разрешённые источники пересылок (ID каналов/чатов, отрицательные для каналов)
+ALLOWED_FORWARD_CHATS = set()  # пример: {-1001234567890}
 
-# --- Глобальное состояние ---
-user_warnings = defaultdict(int)
-reply_context = {}  # admin_id -> target_user_id
+# State
+user_warnings = defaultdict(int)      # user_id -> warns
+reply_context = {}                    # ADMIN_ID -> target_user_id
+
+# Расширенный диапазон эмодзи
+EMOJI_RE = r'[\U0001F300-\U0001F6FF\U0001F900-\U0001FAFF\U00002600-\U000026FF\U00002700-\U000027BF]'
 
 print("✅ BOT ACTIVADO – NUEVA VERSIÓN (fix reply, rules inline, forward check)")
 
-# --- Helpers ---
+# ---------------------- HELPERS ---------------------
 def is_allowed_link(text: str) -> bool:
     text_lower = text.lower()
     for allowed in ALLOWED_LINKS:
@@ -48,15 +61,13 @@ def is_allowed_link(text: str) -> bool:
             return True
     return False
 
-EMOJI_RE = r'[\U0001F300-\U0001F6FF\U0001F900-\U0001FAFF\U00002600-\U000026FF\U00002700-\U000027BF]'
-
 async def safe_delete(msg):
     try:
         await msg.delete()
     except Exception as e:
         logger.debug(f"Delete skipped: {e}")
 
-# --- Команды ---
+# ---------------------- COMMANDS --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 ¡Hola! Mandá tu mensaje al admin o preguntá dudas. ¡Gracias!")
 
@@ -65,7 +76,6 @@ async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📜 <b>Reglas del grupo</b>\n"
         "• No spam, No porno, No drogas.\n"
         "• Sin links ni menciones a otros grupos/canales.\n"
-        "• Respeto siempre.\n"
         "• Reenvíos de canales ajenos: prohibidos.\n"
         "• Exceso de emojis: mute.\n"
     )
@@ -81,7 +91,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<i>¡Gracias por mantener la comunidad limpia!</i>"
     )
 
-# --- Приветствие новых участников (без кнопки, правила сразу) ---
+# ---------------------- WELCOME ---------------------
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for user in update.message.new_chat_members:
         text = (
@@ -97,7 +107,7 @@ async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(60)
         await safe_delete(msg)
 
-# --- Модерация и мут ---
+# ---------------------- MODERATION ------------------
 async def moderate_and_mute(update, context, user, chat_id, reason="infracción de reglas"):
     user_id = user.id
     try:
@@ -107,7 +117,7 @@ async def moderate_and_mute(update, context, user, chat_id, reason="infracción 
             logger.warning(f"[Delete error] {e}")
 
         user_warnings[user_id] += 1
-        logger.info(f"Warn {user_id} ({user.username}): {user_warnings[user_id]} due to {reason}")
+        logger.info(f"[WARN] user={user_id} @{user.username} warns={user_warnings[user_id]} reason={reason}")
 
         if user_warnings[user_id] == 1:
             msg = await context.bot.send_message(
@@ -116,7 +126,7 @@ async def moderate_and_mute(update, context, user, chat_id, reason="infracción 
             )
             await asyncio.sleep(15)
             await safe_delete(msg)
-        elif user_warnings[user_id] >= 2:
+        else:
             until = datetime.now(timezone.utc) + timedelta(hours=24)
             await context.bot.restrict_chat_member(
                 chat_id=chat_id,
@@ -133,32 +143,33 @@ async def moderate_and_mute(update, context, user, chat_id, reason="infracción 
     except Exception as e:
         logger.warning(f"[Moderation error] {e}")
 
-# --- Обработка обычных сообщений в группе ---
+# ---------------------- GROUP MSGS ------------------
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
-    # Если хотим ограничить конкретным GROUP_ID (опционально)
     if GROUP_ID and update.message.chat.id != GROUP_ID:
         return
 
     user = update.message.from_user
     chat_id = update.message.chat.id
     text = (update.message.text or update.message.caption or "")
+    logger.info(f"[GROUP MSG] chat={chat_id} from={user.id} text_len={len(text)}")
 
-    # Админов не трогаем
-    chat_member = await context.bot.get_chat_member(chat_id, user.id)
-    if chat_member.status in ['administrator', 'creator']:
-        return
+    try:
+        chat_member = await context.bot.get_chat_member(chat_id, user.id)
+        if chat_member.status in ['administrator', 'creator']:
+            return
+    except Exception as e:
+        logger.debug(f"get_chat_member fail: {e}")
 
-    # 1) Пересланные сообщения — аккуратная проверка
-    is_fwd = bool(
-        (hasattr(update.message, "is_automatic_forward") and update.message.is_automatic_forward)
-        or update.message.forward_from
-        or update.message.forward_from_chat
-    )
-    if is_fwd:
-        # Разрешим пересылки только из whitelisted источников
+    # 1) Пересланные — аккуратно
+    is_auto_fwd = bool(getattr(update.message, "is_automatic_forward", False))
+    is_fwd_user = bool(update.message.forward_from)
+    is_fwd_chat = bool(update.message.forward_from_chat)
+    is_forward = is_auto_fwd or is_fwd_user or is_fwd_chat
+
+    if is_forward:
         source_ok = False
         if update.message.forward_from_chat:
             src_id = update.message.forward_from_chat.id
@@ -168,10 +179,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await moderate_and_mute(update, context, user, chat_id, "reenviar mensajes (no permitido)")
             return
 
-    # 2) Ссылки/упоминания
+    # 2) Ссылки/упоминания (с игнором email)
     text_lower = text.lower()
-
-    # игнорируем e-mail, чтобы не ловить их как @mention
     text_sanitized = re.sub(r'\S+@\S+\.\S+', '', text_lower)
 
     link_patterns = [
@@ -184,24 +193,26 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await moderate_and_mute(update, context, user, chat_id, "publicar enlaces o menciones no permitidos")
                 return
 
-    # 3) Эмодзи лимит
+    # 3) Эмодзи-лимит
     emoji_count = len(re.findall(EMOJI_RE, text))
     if emoji_count > 10:
         await moderate_and_mute(update, context, user, chat_id, "exceso de emojis")
         return
 
-# --- Личные сообщения от пользователей → админу ---
+# ---------------------- INBOX to ADMIN ---------------
 async def inbox_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ЛС от обычных юзеров → пересылаем админу с кнопкой Responder."""
+    """Личные сообщения от обычных юзеров → пересылаем админу с кнопкой Responder."""
     user = update.message.from_user
     if user.id == ADMIN_ID:
-        return  # этим хэндлером админа не ловим
+        return  # админ в этом хэндлере не нужен
 
+    text = update.message.text or "(sin texto)"
     user_link = f"tg://user?id={user.id}"
     kb = InlineKeyboardMarkup(
         [[InlineKeyboardButton("📨 Responder", callback_data=f"responder_{user.id}")]]
     )
-    text = update.message.text or "(sin texto)"
+
+    logger.info(f"[INBOX] from_user={user.id} @{user.username} -> ADMIN {ADMIN_ID}")
     await context.bot.send_message(
         chat_id=ADMIN_ID,
         text=f"📢 <b>De:</b> @{user.username or user.first_name}\n\n{text}\n\n{user_link}",
@@ -209,7 +220,7 @@ async def inbox_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text("✅ Mensaje enviado al admin.")
 
-# --- Ответ админа адресату после нажатия «Responder» ---
+# ---------------------- CALLBACKS --------------------
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -221,25 +232,32 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✍️ Escribí tu respuesta. Se enviará a <a href='tg://user?id={target_id}'>este usuario</a>."
         )
 
-# --- Приватные сообщения от админа с ответом ---
+# ---------------------- ADMIN REPLY ------------------
 async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Приватные сообщения от админа — отправляются последнему выбранному адресату."""
     if update.effective_user.id != ADMIN_ID:
         return
+
     target_id = reply_context.get(ADMIN_ID)
     if not target_id:
         await update.message.reply_text("⚠️ No hay destinatario seleccionado. Tocá «Responder» debajo del mensaje.")
         return
-    text = update.message.text or ""
-    if not text.strip():
+
+    text = (update.message.text or "").strip()
+    if not text:
         await update.message.reply_text("⚠️ Mensaje vacío.")
         return
 
+    logger.info(f"[REPLY] admin -> user_id={target_id}")
     await context.bot.send_message(chat_id=target_id, text=f"📬 <b>Mensaje del admin</b>:\n\n{text}")
     await update.message.reply_text("✅ Enviado.")
 
-# --- main ---
+# ---------------------- MAIN ------------------------
 def main():
-    defaults = Defaults(parse_mode="HTML", disable_web_page_preview=True)
+    defaults = Defaults(
+        parse_mode="HTML",
+        link_preview_options=LinkPreviewOptions(is_disabled=True)  # вместо deprecated disable_web_page_preview
+    )
     app = Application.builder().token(TOKEN).defaults(defaults).rate_limiter(AIORateLimiter()).build()
 
     # Команды
@@ -247,21 +265,20 @@ def main():
     app.add_handler(CommandHandler("reglas", reglas))
     app.add_handler(CommandHandler("help", help_command))
 
-    # Сервис: вход в группу
+    # Вступление в группу
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
 
-    # Callback: выбор адресата для ответа админом
+    # Callback «Responder»
     app.add_handler(CallbackQueryHandler(handle_callback))
 
-    # Приватка: сначала ловим ответы админа
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.USER(ADMIN_ID), admin_reply))
+    # Порядок важен: сначала ловим приватные ответы админа, потом — входящие от юзеров
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, admin_reply))
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, inbox_to_admin))
 
-    # Приватка: входящая от обычных пользователей → админу
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.USER(ADMIN_ID), inbox_to_admin))
-
-    # Группа: все обычные тексты (не команды)
+    # Группа: сообщения (не команды)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.TEXT & ~filters.COMMAND, handle_messages))
 
+    logger.info("🚀 Bot is starting polling…")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
