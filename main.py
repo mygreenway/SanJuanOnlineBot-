@@ -41,9 +41,9 @@ class JsonFormatter(logging.Formatter):
             "ts": datetime.utcfromtimestamp(record.created).strftime("%Y-%m-%dT%H:%M:%S"),
             "lvl": record.levelname,
             "logger": record.name,
-            "msg": record.getMessage(),
+            "message": record.getMessage(),  # не конфликтует с LogRecord.msg
         }
-        for key in ("event", "chat_id", "user_id", "update_id", "message_id", "warns", "reason"):
+        for key in ("event", "chat_id", "user_id", "update_id", "message_id", "warns", "reason", "detail", "trace"):
             if hasattr(record, key):
                 d[key] = getattr(record, key)
         return json.dumps(d, ensure_ascii=False)
@@ -89,8 +89,7 @@ EMOJI_RE = r'[\U0001F300-\U0001F6FF\U0001F900-\U0001FAFF\U00002600-\U000026FF\U0
 
 user_warnings = defaultdict(int)
 
-# КАРТА ОТВЕТОВ: message_id (в чате админа) -> user_id отправителя
-# LRU до 1000 записей, чтобы не разрасталось в памяти
+# LRU: admin_chat_message_id -> user_id
 reply_map: "OrderedDict[int,int]" = OrderedDict()
 REPLY_MAP_LIMIT = 1000
 
@@ -115,7 +114,7 @@ async def safe_delete(msg):
     try:
         await msg.delete()
     except Exception as e:
-        logger.debug("delete_skip", extra={"event": "delete_skip", "msg": repr(e)})
+        logger.debug("delete_skip", extra={"event": "delete_skip", "detail": repr(e)})
 
 def safe_preview(text: str, limit: int = 160) -> str:
     if not text:
@@ -127,6 +126,14 @@ def build_bot_link(username: str | None) -> str:
     if not username:
         return BOT_LINK_ENV or ""
     return f"https://t.me/{username}?start=contact"
+
+def log_exc(event: str, err: Exception, **kw):
+    logger.error(event, extra={
+        "event": event,
+        "detail": repr(err),
+        "trace": "".join(traceback.format_exception(None, err, err.__traceback__))[:4000],
+        **kw
+    })
 
 # ===================== COMMANDS ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -152,7 +159,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✉️ Escribí cualquier mensaje acá en privado: se reenvía al admin."
     )
 
-# Команда в группе: даём кнопку на ЛС бота
 async def contacto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if GROUP_ID and update.message.chat.id != GROUP_ID:
         return
@@ -185,7 +191,7 @@ async def moderate_and_mute(update, context, user, chat_id, reason="infracción 
         try:
             await update.message.delete()
         except Exception as e:
-            logger.warning("delete_error", extra={"event": "delete_error", "chat_id": chat_id, "user_id": user_id, "msg": repr(e)})
+            logger.warning("delete_error", extra={"event": "delete_error", "chat_id": chat_id, "user_id": user_id, "detail": repr(e)})
 
         user_warnings[user_id] += 1
         logger.info("warn", extra={"event": "warn", "chat_id": chat_id, "user_id": user_id, "warns": user_warnings[user_id], "reason": reason})
@@ -213,7 +219,7 @@ async def moderate_and_mute(update, context, user, chat_id, reason="infracción 
             await asyncio.sleep(15)
             await safe_delete(msg)
     except Exception as e:
-        logger.error("moderation_error", extra={"event": "error", "msg": repr(e)})
+        log_exc("moderation_error", e)
 
 # ===================== GROUP MSGS ==================
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -227,15 +233,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat.id
     text = (update.message.text or update.message.caption or "")
 
-    # Не трогаем админов/создателя
     try:
         chat_member = await context.bot.get_chat_member(chat_id, user.id)
         if chat_member.status in ("administrator", "creator"):
             return
     except Exception as e:
-        logger.debug("get_chat_member_fail", extra={"event": "get_chat_member_fail", "msg": repr(e)})
+        logger.debug("get_chat_member_fail", extra={"event": "get_chat_member_fail", "detail": repr(e)})
 
-    # 1) Пересланные — Bot API 7.0: forward_origin
     origin = getattr(update.message, "forward_origin", None)
     is_forward = origin is not None
 
@@ -249,7 +253,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info("forward_blocked", extra={"event": "forward_blocked", "chat_id": chat_id, "user_id": user.id, "reason": "not_whitelisted", "src_chat": src_id})
             return
 
-    # 2) Ссылки/упоминания (игнорируем e-mail)
     text_lower = text.lower()
     text_sanitized = re.sub(r"\S+@\S+\.\S+", "", text_lower)
 
@@ -267,19 +270,16 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await moderate_and_mute(update, context, user, chat_id, "publicar enlaces o menciones no permitidos")
                 return
 
-    # 3) Эмодзи-лимит
     emoji_count = len(re.findall(EMOJI_RE, text))
     if emoji_count > 10:
         await moderate_and_mute(update, context, user, chat_id, "exceso de emojis")
         return
 
 # ============== INBOX to ADMIN (PRIVATE) ===========
-# Пересылаем ЛЮБОЕ личное сообщение (медиа/текст/голос) админу через copy_message
-# и создаём строгое соответствие "на что отвечаем" -> "кому отправлять".
 async def inbox_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     if user.id == ADMIN_ID:
-        return  # админ сюда не попадает
+        return
 
     try:
         copied = await context.bot.copy_message(
@@ -287,28 +287,25 @@ async def inbox_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from_chat_id=update.message.chat_id,
             message_id=update.message.message_id
         )
-        # Запоминаем соответствие: это СООБЩЕНИЕ у админа связано с отправителем user.id
         reply_map_put(copied.message_id, user.id)
 
-        # Кнопка "Responder" создаёт ForceReply-промпт (без глобального состояния)
         kb = InlineKeyboardMarkup(
             [[InlineKeyboardButton("📨 Responder", callback_data=f"responder_{user.id}:{copied.message_id}")]]
         )
         info = await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"👆 Mensaje de @{user.username or user.first_name} (ID: <code>{user.id}</code>)\n"
-                 f"Respondé <b>en reply</b> a ese mensaje o tocá «Responder».",
+            text=(f"👆 Mensaje de @{user.username or user.first_name} (ID: <code>{user.id}</code>)\n"
+                  f"Respondé <b>en reply</b> a ese mensaje o tocá «Responder»."),
             reply_markup=kb
         )
-        reply_map_put(info.message_id, user.id)  # на всякий случай — если админ ответит на инфо-сообщение
+        reply_map_put(info.message_id, user.id)
         await update.message.reply_text("✅ Mensaje enviado al admin.")
         logger.info("inbox", extra={"event": "inbox", "user_id": user.id})
     except Exception as e:
-        logger.error("inbox_error", extra={"event": "error", "msg": repr(e)})
+        log_exc("inbox_error", e)
         await update.message.reply_text("⚠️ No pude reenviar tu mensaje. Probá de nuevo más tarde.")
 
 # ===================== CALLBACKS ===================
-# Кнопка «Responder»: создаём ForceReply-промпт и маппим его message_id на user_id
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -322,21 +319,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             target_id, ref_mid = None, None
 
-        # подсказка + ForceReply, чтобы следующее сообщение админа имело reply_to_message
         prompt = await query.message.reply_text(
             f"✍️ Escribí tu respuesta para <a href='tg://user?id={target_id}'>este usuario</a> "
             f"y enviála (se reenviará en su privado).",
             reply_markup=ForceReply(selective=True)
         )
         reply_map_put(prompt.message_id, target_id)
-        # Также убедимся, что исходный message_id скопированного сообщения тоже в карте
         if ref_mid:
             reply_map_put(ref_mid, target_id)
         logger.info("reply_prompt", extra={"event": "reply_prompt", "user_id": target_id})
 
 # ===================== ADMIN REPLY =================
-# Админ должен ОТВЕТИТЬ (reply) на скопированное сообщение или на ForceReply-промпт.
-# Тогда по message_id, на который он ответил, найдём нужного пользователя.
 async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -351,7 +344,6 @@ async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ No encuentro destinatario para este reply. Usá el botón «Responder» debajo del mensaje del usuario.")
         return
 
-    # Отправляем ЛЮБОЙ контент как есть (текст/медиа) через copy_message
     try:
         await context.bot.copy_message(
             chat_id=target_id,
@@ -361,18 +353,18 @@ async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Enviado.")
         logger.info("reply_sent", extra={"event": "reply_sent", "user_id": target_id})
     except Exception as e:
-        logger.error("reply_error", extra={"event": "error", "user_id": target_id, "msg": repr(e)})
+        log_exc("reply_error", e, user_id=target_id)
         await update.message.reply_text("⚠️ No pude enviar el mensaje. Probá de nuevo.")
 
 # ===================== ERROR HANDLER ===============
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     err = context.error
     upd_id = getattr(update, "update_id", None)
-    logger.error("handler_error", extra={"event": "error", "update_id": upd_id, "msg": repr(err)})
+    logger.error("handler_error", extra={"event": "error", "update_id": upd_id, "detail": repr(err)})
 
 def handle_asyncio_exception(loop, context):
     msg = context.get("exception") or context.get("message")
-    logger.error("asyncio_error", extra={"event": "asyncio_error", "msg": repr(msg)})
+    logger.error("asyncio_error", extra={"event": "asyncio_error", "detail": repr(msg)})
 
 # ===================== POST INIT ===================
 async def post_init(app: Application):
@@ -381,9 +373,9 @@ async def post_init(app: Application):
         username = getattr(me, "username", None)
         app.bot_data["bot_username"] = username
         app.bot_data["bot_link"] = build_bot_link(username)
-        logger.info("bot_link_ready", extra={"event": "bot_link_ready", "msg": app.bot_data.get("bot_link")})
+        logger.info("bot_link_ready", extra={"event": "bot_link_ready", "detail": app.bot_data.get("bot_link")})
     except Exception as e:
-        logger.error("bot_link_fail", extra={"event": "error", "msg": repr(e)})
+        logger.error("bot_link_fail", extra={"event": "error", "detail": repr(e)})
         if BOT_LINK_ENV:
             app.bot_data["bot_link"] = BOT_LINK_ENV
 
@@ -438,8 +430,8 @@ if __name__ == "__main__":
             main()
             break
         except Conflict:
-            logger.error("Conflict: another getUpdates is running. Retry in 30s…")
+            logger.error("conflict_retry", extra={"event": "conflict_retry", "detail": "another getUpdates is running; retry in 30s"})
             time.sleep(30)
         except Exception as e:
-            logger.error(f"Fatal crash: {e!r}. Retry in 15s…")
+            logger.error("fatal_crash", extra={"event": "fatal_crash", "detail": repr(e)})
             time.sleep(15)
