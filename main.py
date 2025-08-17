@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# San Juan Online Bot — stable build (reply-by-message, lazy bot link, inbox fix) — 2025-08-09
+# San Juan Online Bot — simple forward PM -> admin + welcome contact link — 2025-08-17
 
 import os
 import re
@@ -10,7 +10,7 @@ import asyncio
 import logging
 import traceback
 from datetime import datetime, timedelta, timezone
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
 
 from telegram import (
     Update,
@@ -18,7 +18,6 @@ from telegram import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     LinkPreviewOptions,
-    ForceReply,
 )
 from telegram.ext import (
     Application,
@@ -28,7 +27,6 @@ from telegram.ext import (
     filters,
     Defaults,
     AIORateLimiter,
-    CallbackQueryHandler,
 )
 
 # ===================== LOGGING =====================
@@ -41,7 +39,7 @@ class JsonFormatter(logging.Formatter):
             "ts": datetime.utcfromtimestamp(record.created).strftime("%Y-%m-%dT%H:%M:%S"),
             "lvl": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),  # безопасное имя
+            "message": record.getMessage(),
         }
         for key in ("event", "chat_id", "user_id", "update_id", "message_id", "warns", "reason", "detail", "trace"):
             if hasattr(record, key):
@@ -50,10 +48,7 @@ class JsonFormatter(logging.Formatter):
 
 def configure_logging():
     handler = logging.StreamHandler(sys.stdout)
-    if LOG_JSON:
-        handler.setFormatter(JsonFormatter())
-    else:
-        handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    handler.setFormatter(JsonFormatter() if LOG_JSON else logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(handler)
@@ -66,8 +61,8 @@ logger = logging.getLogger("sanjuan-bot")
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID_RAW = os.getenv("ADMIN_ID", "")
 GROUP_ID = int(os.getenv("GROUP_ID", "0"))         # optional ограничение на один чат
-BOT_LINK_ENV = os.getenv("BOT_LINK")               # опция: https://t.me/YourBot?start=contact
-BOT_USERNAME = os.getenv("BOT_USERNAME", "").lstrip("@")  # если есть — используем для ссылки
+BOT_LINK_ENV = os.getenv("BOT_LINK")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "").lstrip("@")
 
 try:
     ADMIN_ID = int(ADMIN_ID_RAW)
@@ -85,26 +80,11 @@ ALLOWED_LINKS = [
     "https://t.me/sanjuan_online",
 ]
 ALLOWED_LINKS = [link.lower() for link in ALLOWED_LINKS]
-ALLOWED_FORWARD_CHATS = set()  # e.g. {-1001234567890}
+ALLOWED_FORWARD_CHATS = set()
 EMOJI_RE = r'[\U0001F300-\U0001F6FF\U0001F900-\U0001FAFF\U00002600-\U000026FF\U00002700-\U000027BF]'
-
 user_warnings = defaultdict(int)
 
-# LRU: admin_chat_message_id -> user_id
-reply_map: "OrderedDict[int,int]" = OrderedDict()
-REPLY_MAP_LIMIT = 1000
-
-def reply_map_put(message_id: int, user_id: int):
-    if message_id in reply_map:
-        reply_map.move_to_end(message_id)
-    reply_map[message_id] = user_id
-    if len(reply_map) > REPLY_MAP_LIMIT:
-        reply_map.popitem(last=False)
-
-def reply_map_get(message_id: int):
-    return reply_map.get(message_id)
-
-print("✅ BOT ACTIVADO – STABLE (reply-by-message, lazy bot link, inbox fix)")
+print("✅ BOT ACTIVADO – SIMPLE (PM forward only, welcome contact link)")
 
 # ===================== HELPERS =====================
 def is_allowed_link(text: str) -> bool:
@@ -117,12 +97,6 @@ async def safe_delete(msg):
     except Exception as e:
         logger.debug("delete_skip", extra={"event": "delete_skip", "detail": repr(e)})
 
-def safe_preview(text: str, limit: int = 160) -> str:
-    if not text:
-        return ""
-    t = text.replace("\n", " ")
-    return (t[:limit] + "…") if len(t) > limit else t
-
 def build_bot_link_from_username(username: str | None) -> str:
     return f"https://t.me/{username}?start=contact" if username else ""
 
@@ -134,7 +108,6 @@ def log_exc(event: str, err: Exception, **kw):
         **kw
     })
 
-# Ленивое получение ссылки на бота с кэшем: BOT_LINK > BOT_USERNAME > get_me
 async def get_bot_link(context: ContextTypes.DEFAULT_TYPE) -> str | None:
     link = context.bot_data.get("bot_link")
     if link:
@@ -160,11 +133,10 @@ async def get_bot_link(context: ContextTypes.DEFAULT_TYPE) -> str | None:
 
 # ===================== COMMANDS ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    bot_link = await get_bot_link(context)
-    extra = f"\n\n🔗 <a href='{bot_link}'>Escribir al bot</a>" if bot_link else ""
     await update.message.reply_text(
-        "👋 ¡Hola! Este es el bot de <b>San Juan Online</b>.\n"
-        "Escribí tu mensaje acá y se lo envío al admin. ¡Gracias!" + extra
+        "👋 ¡Hola! Este es el bot de <b>San Juan Online</b>.\n\n"
+        "✉️ Escribí tu mensaje acá y lo voy a reenviar al admin.\n"
+        "Gracias por comunicarte 🙌"
     )
 
 async def reglas(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -184,7 +156,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✉️ Escribí cualquier mensaje acá en privado: se reenvía al admin."
     )
 
-# Команда в группе: кнопка на ЛС бота
 async def contacto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if GROUP_ID and update.message.chat.id != GROUP_ID:
         return
@@ -196,14 +167,18 @@ async def contacto(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for user in update.message.new_chat_members:
         bot_link = await get_bot_link(context)
-        link_line = f"\n🔗 <b>Contacto:</b> <a href='{bot_link}'>Escribí al bot</a>" if bot_link else ""
+        link_line = (
+            f"\n\n❓ <b>Por preguntas o propuestas contactá con el admin:</b>\n"
+            f"🔗 <a href='{bot_link}'>Escribí al bot</a>"
+        ) if bot_link else ""
+
         text = (
             f"👋 ¡Bienvenidx {user.first_name} a <b>San Juan Online 🇦🇷</b>!\n\n"
             "📜 <b>Reglas rápidas:</b>\n"
             "• No spam, No porno, No drogas.\n"
             "• Sin links ni menciones a otros grupos/canales.\n"
             "• Reenvíos de canales ajenos: prohibidos.\n"
-            "• Exceso de emojis: mute.\n"
+            "• Exceso de emojis: mute."
             f"{link_line}"
         )
         msg = await update.message.reply_text(text, disable_web_page_preview=True)
@@ -216,12 +191,9 @@ async def moderate_and_mute(update, context, user, chat_id, reason="infracción 
     try:
         try:
             await update.message.delete()
-        except Exception as e:
-            logger.warning("delete_error", extra={"event": "delete_error", "chat_id": chat_id, "user_id": user_id, "detail": repr(e)})
-
+        except Exception:
+            pass
         user_warnings[user_id] += 1
-        logger.info("warn", extra={"event": "warn", "chat_id": chat_id, "user_id": user_id, "warns": user_warnings[user_id], "reason": reason})
-
         if user_warnings[user_id] == 1:
             msg = await context.bot.send_message(
                 chat_id=chat_id,
@@ -241,17 +213,14 @@ async def moderate_and_mute(update, context, user, chat_id, reason="infracción 
                 chat_id=chat_id,
                 text=f"🚫 @{user.username or user.first_name} fue silenciado por 24 horas debido a {reason} repetido."
             )
-            logger.info("mute_24h", extra={"event": "mute_24h", "chat_id": chat_id, "user_id": user_id, "reason": reason})
             await asyncio.sleep(15)
             await safe_delete(msg)
     except Exception as e:
         log_exc("moderation_error", e)
 
-# ===================== GROUP MSGS ==================
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-
     if GROUP_ID and update.message.chat.id != GROUP_ID:
         return
 
@@ -259,40 +228,17 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat.id
     text = (update.message.text or update.message.caption or "")
 
-    # не трогаем админов/создателя
     try:
         chat_member = await context.bot.get_chat_member(chat_id, user.id)
         if chat_member.status in ("administrator", "creator"):
             return
-    except Exception as e:
-        logger.debug("get_chat_member_fail", extra={"event": "get_chat_member_fail", "detail": repr(e)})
+    except Exception:
+        pass
 
-    # forward check (Bot API 7.0+)
-    origin = getattr(update.message, "forward_origin", None)
-    is_forward = origin is not None
-
-    if is_forward:
-        src_chat = getattr(origin, "chat", None)
-        src_id = getattr(src_chat, "id", None)
-        source_ok = src_id in ALLOWED_FORWARD_CHATS if src_id is not None else False
-
-        if not source_ok:
-            await moderate_and_mute(update, context, user, chat_id, "reenviar mensajes (no permitido)")
-            logger.info("forward_blocked", extra={"event": "forward_blocked", "chat_id": chat_id, "user_id": user.id, "reason": "not_whitelisted", "src_chat": src_id})
-            return
-
-    # ссылки/упоминания (игнорируем e-mail)
+    # блокировка ссылок/упоминаний
     text_lower = text.lower()
     text_sanitized = re.sub(r"\S+@\S+\.\S+", "", text_lower)
-
-    link_patterns = [
-        r"https?://",
-        r"t\.me/",
-        r"telegram\.me/",
-        r"t\[\.\]me",
-        r"telegram\[\.\]me",
-        r"(?<!\S)@\w{3,}",
-    ]
+    link_patterns = [r"https?://", r"t\.me/", r"telegram\.me/", r"(?<!\S)@\w{3,}"]
     for pattern in link_patterns:
         if re.search(pattern, text_sanitized):
             if not is_allowed_link(text_sanitized):
@@ -305,105 +251,26 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await moderate_and_mute(update, context, user, chat_id, "exceso de emojis")
         return
 
-# ============== INBOX to ADMIN (PRIVATE) ===========
-# Пересылаем ЛЮБОЕ личное сообщение админу через copy_message + безопасные id
-# Если copy падает, делаем текстовый fallback
+# ===================== PRIVATE PM ==================
 async def inbox_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id == ADMIN_ID:
         return
-
     try:
-        from_chat_id = update.effective_chat.id
-        msg_id = update.message.message_id
-
-        copied = await context.bot.copy_message(
+        await context.bot.forward_message(
             chat_id=ADMIN_ID,
-            from_chat_id=from_chat_id,
-            message_id=msg_id
-        )
-        reply_map_put(copied.message_id, user.id)
-
-        kb = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("📨 Responder", callback_data=f"responder_{user.id}:{copied.message_id}")]]
-        )
-        info = await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=(f"👆 Mensaje de @{user.username or user.first_name} (ID: <code>{user.id}</code>)\n"
-                  f"Respondé <b>en reply</b> a ese mensaje o tocá «Responder»."),
-            reply_markup=kb
-        )
-        reply_map_put(info.message_id, user.id)
-
-        await update.message.reply_text("✅ Mensaje enviado al admin.")
-        logger.info("inbox", extra={"event": "inbox", "user_id": user.id})
-
-    except Exception as e:
-        # текстовый фоллбек
-        try:
-            text = update.message.text or "(mensaje sin texto / contenido no copiable)"
-            info = await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"📢 De @{user.username or user.first_name} (ID: <code>{user.id}</code>):\n\n{safe_preview(text)}"
-            )
-            reply_map_put(info.message_id, user.id)
-            await update.message.reply_text("✅ Mensaje enviado al admin.")
-            logger.warning("inbox_fallback", extra={"event": "inbox_fallback", "detail": repr(e)})
-        except Exception as e2:
-            log_exc("inbox_error", e2)
-            await update.message.reply_text("⚠️ No pude reenviar tu mensaje. Probá de nuevo más tarde.")
-
-# ===================== CALLBACKS ===================
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data.startswith("responder_"):
-        try:
-            payload = query.data.split("_", 1)[1]  # "<uid>:<mid>"
-            uid_str, ref_mid_str = payload.split(":")
-            target_id = int(uid_str)
-            ref_mid = int(ref_mid_str)
-        except Exception:
-            target_id, ref_mid = None, None
-
-        prompt = await query.message.reply_text(
-            f"✍️ Escribí tu respuesta para <a href='tg://user?id={target_id}'>este usuario</a> "
-            f"y enviála (se reenviará en su privado).",
-            reply_markup=ForceReply(selective=True)
-        )
-        reply_map_put(prompt.message_id, target_id)
-        if ref_mid:
-            reply_map_put(ref_mid, target_id)
-        logger.info("reply_prompt", extra={"event": "reply_prompt", "user_id": target_id})
-
-# ===================== ADMIN REPLY =================
-# Админ отвечает ТОЛЬКО по reply: адресат берётся из reply_map по message_id
-async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    r = update.message.reply_to_message
-    if not r:
-        await update.message.reply_text("ℹ️ Para responder, contestá «en reply» al mensaje del usuario o usá el botón «Responder».")
-        return
-
-    target_id = reply_map_get(r.message_id)
-    if not target_id:
-        await update.message.reply_text("⚠️ No encuentro destinatario para este reply. Usá el botón «Responder» debajo del mensaje del usuario.")
-        return
-
-    try:
-        await context.bot.copy_message(
-            chat_id=target_id,
             from_chat_id=update.effective_chat.id,
             message_id=update.message.message_id
         )
-        await update.message.reply_text("✅ Enviado.")
-        logger.info("reply_sent", extra={"event": "reply_sent", "user_id": target_id})
+        await update.message.reply_text("✅ Mensaje enviado al admin.")
     except Exception as e:
-        log_exc("reply_error", e, user_id=target_id)
-        await update.message.reply_text("⚠️ No pude enviar el mensaje. Probá de nuevo.")
+        log_exc("inbox_error", e)
+        await update.message.reply_text(
+            "⚠️ No pude reenviar tu mensaje al admin.\n"
+            "Posibles causas:\n"
+            "• El admin aún no inició el chat con el bot (/start).\n"
+            "• ADMIN_ID incorrecto."
+        )
 
 # ===================== ERROR HANDLER ===============
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -417,7 +284,6 @@ def handle_asyncio_exception(loop, context):
 
 # ===================== POST INIT ===================
 async def post_init(app: Application):
-    # Заполним bot_link в кэше, если вдруг ещё не был построен
     try:
         if BOT_LINK_ENV:
             app.bot_data["bot_link"] = BOT_LINK_ENV
@@ -434,10 +300,7 @@ async def post_init(app: Application):
 
 # ===================== MAIN ========================
 def make_app() -> Application:
-    defaults = Defaults(
-        parse_mode="HTML",
-        link_preview_options=LinkPreviewOptions(is_disabled=True),
-    )
+    defaults = Defaults(parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
     app = Application.builder().token(TOKEN).defaults(defaults).rate_limiter(AIORateLimiter()).build()
 
     # Команды
@@ -449,12 +312,8 @@ def make_app() -> Application:
     # Вступление в группу
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
 
-    # Callback «Responder»
-    app.add_handler(CallbackQueryHandler(handle_callback))
-
-    # Порядок: сначала приватка админа (любой контент), затем приватка пользователей (любой контент)
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, admin_reply))
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, inbox_to_admin))
+    # Приватка: пользователи → админу
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.User(ADMIN_ID) & ~filters.COMMAND, inbox_to_admin))
 
     # Группа: тексты
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.TEXT & ~filters.COMMAND, handle_messages))
@@ -468,12 +327,7 @@ def main():
     asyncio.get_event_loop().set_exception_handler(handle_asyncio_exception)
     app = make_app()
     logger.info("🚀 Bot is starting polling…")
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        stop_signals=(signal.SIGINT, signal.SIGTERM),
-        drop_pending_updates=True,
-        close_loop=False
-    )
+    app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=(signal.SIGINT, signal.SIGTERM), drop_pending_updates=True, close_loop=False)
 
 if __name__ == "__main__":
     import time
